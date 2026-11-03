@@ -1,0 +1,145 @@
+{
+ "set": "ngc6823",
+ "folders": [
+  "NGC 6823/lights"
+ ],
+ "settings": {
+  "debayer": "rcd",
+  "interp": "bicubic",
+  "norm": "spread",
+  "weight": "none",
+  "transform": "similarity",
+  "rejection": "sigma",
+  "select": 0,
+  "feather": 0,
+  "rgb_equal": true,
+  "match_gradients": false
+ },
+ "session": {
+  "heat_map_s": 22.2,
+  "stack_s": 21.6,
+  "alignment": {
+   "reference": "NGC 6823\\lights\\Light_mosaic_NGC 6823_10.0s_LP_20260609-012946.fit",
+   "reference_choice": null,
+   "aligned": 498,
+   "alignment_failed": 0,
+   "retained": 498,
+   "methods": {
+    "direct": 463,
+    "neighbour": 34,
+    "reference": 1
+   },
+   "max_depth": 1,
+   "rms_px_median": 0.528,
+   "rms_px_p95": 0.582,
+   "rms_px_max": 0.632,
+   "canvas": {
+    "framing": "union",
+    "width": 2796,
+    "height": 4107,
+    "origin_xy": [
+     -569,
+     -1474
+    ],
+    "area_ratio": 5.537795138888889,
+    "tiles": 0,
+    "covered_pixels": 8810402,
+    "half_coverage_pixels": 1250691,
+    "full_coverage_pixels": 0
+   }
+  },
+  "stack": {
+   "well_covered_px": 1532958,
+   "background_rms_adu": 2.052,
+   "star_snr": 1327.0,
+   "centre": {
+    "stars": 171,
+    "fwhm_px": 2.526,
+    "ellipticity": 0.0766
+   },
+   "outer": {
+    "stars": 176,
+    "fwhm_px": 2.588,
+    "ellipticity": 0.0932
+   },
+   "all": {
+    "stars": 696,
+    "fwhm_px": 2.55,
+    "ellipticity": 0.0879
+   }
+  },
+  "stack_file": "out\\reference_trial\\ngc6823\\session\\NGC_6823_498x10sec_2026-06-08_2026-06-09_2026-10-29_231442_gpucoadd.fits"
+ },
+ "measured": {
+  "heat_map_s": 19.2,
+  "stack_s": 23.1,
+  "alignment": {
+   "reference": "NGC 6823\\lights\\Light_mosaic_NGC 6823_10.0s_LP_20260609-002125.fit",
+   "reference_choice": {
+    "rule": "measured",
+    "pool": 498,
+    "sky_extent_deg": [
+     1.083,
+     1.033
+    ],
+    "field_deg": 0.718,
+    "index": 1,
+    "candidates": 63,
+    "widened_to_all": false,
+    "qualified": 49,
+    "fwhm_px": 3.7,
+    "fwhm_median_px": 3.974,
+    "transparency_vs_median": 0.946,
+    "background_vs_median": 1.0,
+    "centre_offset_deg": 0.004,
+    "summary": "light #2 of 498: 63 candidates near the centre of the covered sky, 49 within the background and star-flux limits; FWHM 3.7 px (median 3.974), star flux x0.946, background x1.0 of the candidates' median, 0.004 deg from the centre"
+   },
+   "aligned": 498,
+   "alignment_failed": 0,
+   "retained": 498,
+   "methods": {
+    "direct": 497,
+    "reference": 1
+   },
+   "max_depth": 0,
+   "rms_px_median": 0.532,
+   "rms_px_p95": 0.594,
+   "rms_px_max": 0.68,
+   "canvas": {
+    "framing": "union",
+    "width": 2836,
+    "height": 4049,
+    "origin_xy": [
+     -906,
+     -1023
+    ],
+    "area_ratio": 5.537694830246914,
+    "tiles": 0,
+    "covered_pixels": 8810233,
+    "half_coverage_pixels": 1250706,
+    "full_coverage_pixels": 0
+   }
+  },
+  "stack": {
+   "well_covered_px": 1533060,
+   "background_rms_adu": 2.152,
+   "star_snr": 1310.43,
+   "centre": {
+    "stars": 169,
+    "fwhm_px": 2.548,
+    "ellipticity": 0.0745
+   },
+   "outer": {
+    "stars": 179,
+    "fwhm_px": 2.546,
+    "ellipticity": 0.0977
+   },
+   "all": {
+    "stars": 699,
+    "fwhm_px": 2.551,
+    "ellipticity": 0.0841
+   }
+  },
+  "stack_file": "out\\reference_trial\\ngc6823\\measured\\NGC_6823_498x10sec_2026-06-08_2026-06-09_2026-10-29_232215_gpucoadd.fits"
+ }
+}

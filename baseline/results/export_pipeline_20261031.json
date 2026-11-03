@@ -1,0 +1,129 @@
+{
+  "date": "2026-10-31",
+  "gpu": "NVIDIA GeForce RTX 3060",
+  "dataset": "IC 63, 31 S50 Pro lights; cached alignment; RCD; bicubic; spread normalization with RGB equalization; same E: drive",
+  "order": [
+    "serial",
+    "overlap",
+    "overlap",
+    "serial"
+  ],
+  "byte_identical_exports": true,
+  "verification": "Full SHA-256 write and read-back verification unchanged. All 62 exported files matched within each comparison pair.",
+  "runs": [
+    {
+      "mode": "serial",
+      "exports": {
+        "aligned_lights": {
+          "saved": 31,
+          "total": 31,
+          "bytes": 3600394560,
+          "render_s": 4.781328100012615,
+          "write_s": 25.924643700011075,
+          "elapsed_s": 30.76231519994326,
+          "overlap": false,
+          "tile": 2048
+        },
+        "debayered_lights": {
+          "saved": 31,
+          "total": 31,
+          "bytes": 3085606080,
+          "render_s": 4.481534901075065,
+          "write_s": 21.255752600496635,
+          "elapsed_s": 25.78562239999883,
+          "overlap": false,
+          "tile": 2048
+        }
+      },
+      "job_seconds": 71.09962800005451,
+      "compared_export_files": 62
+    },
+    {
+      "mode": "overlap",
+      "exports": {
+        "aligned_lights": {
+          "saved": 31,
+          "total": 31,
+          "bytes": 3600394560,
+          "render_s": 4.490583299892023,
+          "write_s": 26.000833799596876,
+          "elapsed_s": 26.11396749992855,
+          "overlap": true,
+          "tile": 2048
+        },
+        "debayered_lights": {
+          "saved": 31,
+          "total": 31,
+          "bytes": 3085606080,
+          "render_s": 4.796999400248751,
+          "write_s": 22.378722600638866,
+          "elapsed_s": 22.645286899991333,
+          "overlap": true,
+          "tile": 2048
+        }
+      },
+      "job_seconds": 54.03087619994767,
+      "compared_export_files": 62
+    },
+    {
+      "mode": "overlap",
+      "exports": {
+        "aligned_lights": {
+          "saved": 31,
+          "total": 31,
+          "bytes": 3600394560,
+          "render_s": 4.976999399717897,
+          "write_s": 25.75468699983321,
+          "elapsed_s": 25.87748429994099,
+          "overlap": true,
+          "tile": 2048
+        },
+        "debayered_lights": {
+          "saved": 31,
+          "total": 31,
+          "bytes": 3085606080,
+          "render_s": 4.929654400097206,
+          "write_s": 22.660780099220574,
+          "elapsed_s": 22.957550900056958,
+          "overlap": true,
+          "tile": 2048
+        }
+      },
+      "job_seconds": 56.472591899801046,
+      "compared_export_files": 62
+    },
+    {
+      "mode": "serial",
+      "exports": {
+        "aligned_lights": {
+          "saved": 31,
+          "total": 31,
+          "bytes": 3600394560,
+          "render_s": 5.128000300377607,
+          "write_s": 25.405393600463867,
+          "elapsed_s": 30.591570399934426,
+          "overlap": false,
+          "tile": 2048
+        },
+        "debayered_lights": {
+          "saved": 31,
+          "total": 31,
+          "bytes": 3085606080,
+          "render_s": 3.6422021004837006,
+          "write_s": 21.66038510017097,
+          "elapsed_s": 25.346255799988285,
+          "overlap": false,
+          "tile": 2048
+        }
+      },
+      "job_seconds": 61.35668270010501,
+      "compared_export_files": 62
+    }
+  ],
+  "limitations": [
+    "337-light savings are extrapolated, not measured on the full dataset.",
+    "Initial disk-backed canvases use serial writing. RAM allocation falling back to disk drains the writer and continues serially.",
+    "One pending write and at most two buffers per distinct light shape; one extra RGB buffer is about 95 MiB at 2160x3840.",
+    "render_s and write_s overlap and must not be added to estimate wall time; use elapsed_s."
+  ]
+}

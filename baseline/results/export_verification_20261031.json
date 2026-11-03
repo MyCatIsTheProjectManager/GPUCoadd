@@ -1,0 +1,376 @@
+{
+  "date": "2026-10-31",
+  "cpu": "Intel Core i7-6700K",
+  "gpu": "NVIDIA GeForce RTX 3060",
+  "implementation": "One exclusive serialized-pixel RAM buffer per export, reused by the single writer. Every written pixel byte is read back and compared directly. Header and length checks, fsync and atomic publication remain enabled. Streaming SHA-256 is the fallback when this buffer does not fit. No new runtime dependencies.",
+  "paired_31_lights": {
+    "byte_identical_exports": true,
+    "runs": [
+      {
+        "round": 1,
+        "mode": "sha256",
+        "job_seconds": 51.944099799962714,
+        "exports": {
+          "aligned_lights": {
+            "saved": 31,
+            "total": 31,
+            "bytes": 3600394560,
+            "render_s": 4.589043900137767,
+            "write_s": 24.96427349979058,
+            "elapsed_s": 25.100339700002223,
+            "overlap": true,
+            "verification": "sha256",
+            "tile": 2048
+          },
+          "debayered_lights": {
+            "saved": 31,
+            "total": 31,
+            "bytes": 3085606080,
+            "render_s": 4.086127300281078,
+            "write_s": 21.53122530085966,
+            "elapsed_s": 21.64478509989567,
+            "overlap": true,
+            "verification": "sha256",
+            "tile": 2048
+          }
+        },
+        "compared_export_files": 62
+      },
+      {
+        "round": 1,
+        "mode": "exact",
+        "job_seconds": 28.038813500199467,
+        "exports": {
+          "aligned_lights": {
+            "saved": 31,
+            "total": 31,
+            "bytes": 3600394560,
+            "render_s": 4.035307299811393,
+            "write_s": 12.296226599253714,
+            "elapsed_s": 12.405887899920344,
+            "overlap": true,
+            "verification": "exact",
+            "tile": 2048
+          },
+          "debayered_lights": {
+            "saved": 31,
+            "total": 31,
+            "bytes": 3085606080,
+            "render_s": 3.8046013002749532,
+            "write_s": 9.92587530054152,
+            "elapsed_s": 10.178830499993637,
+            "overlap": true,
+            "verification": "exact",
+            "tile": 2048
+          }
+        },
+        "compared_export_files": 62
+      },
+      {
+        "round": 2,
+        "mode": "exact",
+        "job_seconds": 27.93892899993807,
+        "exports": {
+          "aligned_lights": {
+            "saved": 31,
+            "total": 31,
+            "bytes": 3600394560,
+            "render_s": 4.028168000513688,
+            "write_s": 12.165176899870858,
+            "elapsed_s": 12.27870859997347,
+            "overlap": true,
+            "verification": "exact",
+            "tile": 2048
+          },
+          "debayered_lights": {
+            "saved": 31,
+            "total": 31,
+            "bytes": 3085606080,
+            "render_s": 3.352279600687325,
+            "write_s": 9.943472899962217,
+            "elapsed_s": 10.211241000099108,
+            "overlap": true,
+            "verification": "exact",
+            "tile": 2048
+          }
+        },
+        "compared_export_files": 62
+      },
+      {
+        "round": 2,
+        "mode": "sha256",
+        "job_seconds": 53.86951930006035,
+        "exports": {
+          "aligned_lights": {
+            "saved": 31,
+            "total": 31,
+            "bytes": 3600394560,
+            "render_s": 4.821271500084549,
+            "write_s": 25.748295900644735,
+            "elapsed_s": 25.865837200079113,
+            "overlap": true,
+            "verification": "sha256",
+            "tile": 2048
+          },
+          "debayered_lights": {
+            "saved": 31,
+            "total": 31,
+            "bytes": 3085606080,
+            "render_s": 4.66318800044246,
+            "write_s": 22.089488700497895,
+            "elapsed_s": 22.469727700110525,
+            "overlap": true,
+            "verification": "sha256",
+            "tile": 2048
+          }
+        },
+        "compared_export_files": 62
+      }
+    ]
+  },
+  "writer_probes": [
+    {
+      "kind": "fits_writer",
+      "round": 1,
+      "mode": "sha256",
+      "lights": 6,
+      "seconds": 4.367233800003305,
+      "sha256": "1200688ebda603fc563d9e685e04ac856ad0fba59f1f711cffe6a96bd1123a5b"
+    },
+    {
+      "kind": "fits_writer",
+      "round": 1,
+      "mode": "blake3",
+      "lights": 6,
+      "seconds": 2.4026128000114113,
+      "sha256": "1200688ebda603fc563d9e685e04ac856ad0fba59f1f711cffe6a96bd1123a5b"
+    },
+    {
+      "kind": "fits_writer",
+      "round": 1,
+      "mode": "replay",
+      "lights": 6,
+      "seconds": 3.1209791000001132,
+      "sha256": "1200688ebda603fc563d9e685e04ac856ad0fba59f1f711cffe6a96bd1123a5b"
+    },
+    {
+      "kind": "fits_writer",
+      "round": 2,
+      "mode": "replay",
+      "lights": 6,
+      "seconds": 3.2698337000329047,
+      "sha256": "1200688ebda603fc563d9e685e04ac856ad0fba59f1f711cffe6a96bd1123a5b"
+    },
+    {
+      "kind": "fits_writer",
+      "round": 2,
+      "mode": "blake3",
+      "lights": 6,
+      "seconds": 2.2442244000267237,
+      "sha256": "1200688ebda603fc563d9e685e04ac856ad0fba59f1f711cffe6a96bd1123a5b"
+    },
+    {
+      "kind": "fits_writer",
+      "round": 2,
+      "mode": "sha256",
+      "lights": 6,
+      "seconds": 4.334641500143334,
+      "sha256": "1200688ebda603fc563d9e685e04ac856ad0fba59f1f711cffe6a96bd1123a5b"
+    },
+    {
+      "kind": "compression",
+      "mode": "zstd1",
+      "lights": 1,
+      "seconds": 0.46750829997472465,
+      "raw_bytes": 99532800,
+      "compressed_bytes": 75838733,
+      "ratio": 0.7619471470711162,
+      "byte_identical": true
+    },
+    {
+      "kind": "compression",
+      "mode": "lz4",
+      "lights": 1,
+      "seconds": 0.3522773999720812,
+      "raw_bytes": 99532800,
+      "compressed_bytes": 89514499,
+      "ratio": 0.899346737959748,
+      "byte_identical": true
+    },
+    {
+      "kind": "compression",
+      "mode": "shuffle_zstd1",
+      "lights": 1,
+      "seconds": 0.6209658998996019,
+      "raw_bytes": 99532800,
+      "compressed_bytes": 61356299,
+      "ratio": 0.6164430117509002,
+      "byte_identical": true
+    },
+    {
+      "kind": "compression",
+      "mode": "shuffle_lz4",
+      "lights": 1,
+      "seconds": 0.43321749987080693,
+      "raw_bytes": 99532800,
+      "compressed_bytes": 74105470,
+      "ratio": 0.744533158918467,
+      "byte_identical": true
+    }
+  ],
+  "memory_probes": [
+    {
+      "kind": "fits_writer",
+      "round": 1,
+      "mode": "blake3",
+      "lights": 6,
+      "seconds": 2.620642099995166,
+      "sha256": "1200688ebda603fc563d9e685e04ac856ad0fba59f1f711cffe6a96bd1123a5b"
+    },
+    {
+      "kind": "fits_writer",
+      "round": 1,
+      "mode": "retained",
+      "lights": 6,
+      "seconds": 2.1877243001945317,
+      "sha256": "1200688ebda603fc563d9e685e04ac856ad0fba59f1f711cffe6a96bd1123a5b"
+    },
+    {
+      "kind": "fits_writer",
+      "round": 1,
+      "mode": "inplace_replay",
+      "lights": 6,
+      "seconds": 2.8030788998585194,
+      "sha256": "1200688ebda603fc563d9e685e04ac856ad0fba59f1f711cffe6a96bd1123a5b"
+    },
+    {
+      "kind": "fits_writer",
+      "round": 2,
+      "mode": "inplace_replay",
+      "lights": 6,
+      "seconds": 2.5750311999581754,
+      "sha256": "1200688ebda603fc563d9e685e04ac856ad0fba59f1f711cffe6a96bd1123a5b"
+    },
+    {
+      "kind": "fits_writer",
+      "round": 2,
+      "mode": "retained",
+      "lights": 6,
+      "seconds": 2.0992042999714613,
+      "sha256": "1200688ebda603fc563d9e685e04ac856ad0fba59f1f711cffe6a96bd1123a5b"
+    },
+    {
+      "kind": "fits_writer",
+      "round": 2,
+      "mode": "blake3",
+      "lights": 6,
+      "seconds": 2.17343830014579,
+      "sha256": "1200688ebda603fc563d9e685e04ac856ad0fba59f1f711cffe6a96bd1123a5b"
+    }
+  ],
+  "native_sha256": [
+    {
+      "mode": "openssl_sha256",
+      "bytes": 99532800,
+      "repeats": 4,
+      "seconds": 0.8822663000319153
+    },
+    {
+      "mode": "windows_sha256",
+      "bytes": 99532800,
+      "repeats": 4,
+      "seconds": 1.7687776000238955
+    }
+  ],
+  "gpu_conversion_prototype": {
+    "results": [
+      {
+        "mode": "cpu",
+        "lights": 10,
+        "seconds": 1.4617611998692155,
+        "byte_identical": true
+      },
+      {
+        "mode": "gpu_with_download",
+        "lights": 10,
+        "seconds": 0.09145690011791885,
+        "byte_identical": true
+      },
+      {
+        "mode": "gpu_with_download",
+        "lights": 10,
+        "seconds": 0.08434510021470487,
+        "byte_identical": true
+      },
+      {
+        "mode": "cpu",
+        "lights": 10,
+        "seconds": 1.3881490998901427,
+        "byte_identical": true
+      }
+    ],
+    "limitation": "GPU input already resident; excludes upload and rendering. Integration would require GPU render canvases and pinned buffers."
+  },
+  "limitations": [
+    "Compression probes use a real normalized S50 Pro light pixel payload, not an application-compatible compressed FITS implementation; include compression, write, flush, read, decompression and exact byte check, but exclude initial ADU conversion and FITS metadata.",
+    "Writer probes are serial microbenchmarks on one representative light repeated six times, distinct from real multi-light GPU jobs.",
+    "GPU conversion prototype assumes GPU-resident input and excludes upload and rendering; it is not integrated into production.",
+    "No compression or additional hashing dependency was added to the production runtime."
+  ],
+  "full_337_lights": {
+    "lights": 337,
+    "job_seconds": 320.75540949986316,
+    "analysis_seconds": 19.855972799938172,
+    "exports": {
+      "aligned_lights": {
+        "saved": 337,
+        "total": 337,
+        "bytes": 33543524160,
+        "render_s": 50.96574510121718,
+        "write_s": 141.5660997997038,
+        "elapsed_s": 141.83245079987682,
+        "overlap": true,
+        "verification": "exact",
+        "tile": 2048
+      },
+      "debayered_lights": {
+        "saved": 337,
+        "total": 337,
+        "bytes": 33543524160,
+        "render_s": 50.37254959787242,
+        "write_s": 146.13376750121824,
+        "elapsed_s": 146.3936552000232,
+        "overlap": true,
+        "verification": "exact",
+        "tile": 2048
+      }
+    },
+    "warnings": [],
+    "verification": "Every exported header, file length and pixel byte was read back and checked against exclusive RAM bytes before publication.",
+    "comparison": "No SHA-256 baseline was rerun on all 337 lights; byte-identical output comparison was performed separately on all 62 IC 63 exports in each paired run.",
+    "original_recorded_seconds": {
+      "aligned_lights": 345.1,
+      "debayered_lights": 331.4
+    },
+    "original_recorded_source": {
+      "aligned_lights": "compare-saspro/aligned_timing/ngc7380_337/timing.json",
+      "debayered_lights": "compare-saspro/debayered_timing/ngc7380_337/timing.json"
+    },
+    "historical_baseline_note": "The original 337-light baselines are earlier runs on the same PC and drive, not fresh contemporaneous A/B runs. The paired 31-light test used both orders.",
+    "temporary_exports_removed": true
+  },
+  "regression_validation": {
+    "tests": 89,
+    "seconds": 76.785,
+    "result": "OK",
+    "coverage": [
+      "export pipeline ownership and shutdown",
+      "aligned and debayered GPU exports",
+      "exact and SHA-256 FITS writing",
+      "corruption and cancellation",
+      "source integrity",
+      "Unicode paths",
+      "output folders and reporting"
+    ]
+  }
+}

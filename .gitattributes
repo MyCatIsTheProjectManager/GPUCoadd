@@ -1,0 +1,11 @@
+* text=auto eol=lf
+*.pdf binary
+# bridge.py fingerprints gpucoadd.py by its exact bytes (cache invalidation),
+# so store and check it out byte-for-byte with no line-ending conversion.
+gpucoadd.py -text
+overlap.py -text
+lightgroups.py -text
+rcd_fused.py -text
+cuda_kernels.py -text
+integrate_kernels.py -text
+warp_kernels.py -text

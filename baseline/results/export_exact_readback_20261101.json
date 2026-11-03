@@ -1,0 +1,259 @@
+{
+  "date": "2026-11-01",
+  "cpu": "Intel Core i7-6700K",
+  "gpu": "NVIDIA GeForce RTX 3060",
+  "drive": "Kingston SNV3S2000G NVMe SSD, NTFS",
+  "change": "Exact read-back reads each 4 MiB block into one reusable buffer and compares it with the bytes that were written using the C runtime's memcmp (NumPy if that is unavailable). Before, each block was read as a new bytes object and the expected bytes were copied again for the comparison. Every pixel byte, the header, the dimensions and the file length are still checked; per-file fsync and atomic publication are unchanged.",
+  "workload": "31 IC 63 S50 Pro lights, full 2428 x 3986 canvas, aligned and debayered exports (62 files, 6.23 GiB per run), GPU formatting, RAM canvases, one writer. Alignment reused, kernels warmed. Two independent experiments, each with both orders.",
+  "timed": "export stages only (render, write, flush, verify); stacking, independent comparison and cleanup excluded",
+  "experiments": [
+    {
+      "name": "first",
+      "runs": [
+        {
+          "round": 1,
+          "mode": "previous",
+          "exports": {
+            "aligned_lights": {
+              "saved": 31,
+              "bytes": 3600394560,
+              "render_s": 1.5218559999484569,
+              "write_s": 5.1949061991181225,
+              "elapsed_s": 5.281517100054771,
+              "verification": "exact"
+            },
+            "debayered_lights": {
+              "saved": 31,
+              "bytes": 3085606080,
+              "render_s": 1.551738599780947,
+              "write_s": 4.448137199273333,
+              "elapsed_s": 4.5749558000825346,
+              "verification": "exact"
+            }
+          },
+          "export_stages_s": 9.856472900137305,
+          "all_export_bytes_and_stack_pixels_identical": true
+        },
+        {
+          "round": 1,
+          "mode": "faster",
+          "exports": {
+            "aligned_lights": {
+              "saved": 31,
+              "bytes": 3600394560,
+              "render_s": 1.1874496988020837,
+              "write_s": 3.80328780063428,
+              "elapsed_s": 3.8816114000510424,
+              "verification": "exact"
+            },
+            "debayered_lights": {
+              "saved": 31,
+              "bytes": 3085606080,
+              "render_s": 1.3874029000289738,
+              "write_s": 3.367323800455779,
+              "elapsed_s": 3.470887599978596,
+              "verification": "exact"
+            }
+          },
+          "export_stages_s": 7.352499000029638,
+          "all_export_bytes_and_stack_pixels_identical": true
+        },
+        {
+          "round": 2,
+          "mode": "faster",
+          "exports": {
+            "aligned_lights": {
+              "saved": 31,
+              "bytes": 3600394560,
+              "render_s": 1.3372879994567484,
+              "write_s": 3.977918699849397,
+              "elapsed_s": 4.072788099991158,
+              "verification": "exact"
+            },
+            "debayered_lights": {
+              "saved": 31,
+              "bytes": 3085606080,
+              "render_s": 1.1500823001842946,
+              "write_s": 3.374573099659756,
+              "elapsed_s": 3.488771899836138,
+              "verification": "exact"
+            }
+          },
+          "export_stages_s": 7.5615599998272955,
+          "all_export_bytes_and_stack_pixels_identical": true
+        },
+        {
+          "round": 2,
+          "mode": "previous",
+          "exports": {
+            "aligned_lights": {
+              "saved": 31,
+              "bytes": 3600394560,
+              "render_s": 1.240708699915558,
+              "write_s": 6.016773900017142,
+              "elapsed_s": 6.1249182999599725,
+              "verification": "exact"
+            },
+            "debayered_lights": {
+              "saved": 31,
+              "bytes": 3085606080,
+              "render_s": 1.2667109000030905,
+              "write_s": 4.794725299580023,
+              "elapsed_s": 4.90618190006353,
+              "verification": "exact"
+            }
+          },
+          "export_stages_s": 11.031100200023502,
+          "all_export_bytes_and_stack_pixels_identical": true
+        }
+      ]
+    },
+    {
+      "name": "repeat",
+      "runs": [
+        {
+          "round": 1,
+          "mode": "previous",
+          "exports": {
+            "aligned_lights": {
+              "saved": 31,
+              "bytes": 3600394560,
+              "render_s": 1.737092699855566,
+              "write_s": 7.945759699912742,
+              "elapsed_s": 8.035725000081584,
+              "verification": "exact",
+              "flush_s_sum": 4.0649824005085975,
+              "verify_s_sum": 2.8899012999609113
+            },
+            "debayered_lights": {
+              "saved": 31,
+              "bytes": 3085606080,
+              "render_s": 1.6800385003443807,
+              "write_s": 7.402003599796444,
+              "elapsed_s": 7.502830100012943,
+              "verification": "exact",
+              "flush_s_sum": 4.167102399514988,
+              "verify_s_sum": 2.4336877996101975
+            }
+          },
+          "export_stages_s": 15.538555100094527,
+          "all_export_bytes_and_stack_pixels_identical": true
+        },
+        {
+          "round": 1,
+          "mode": "faster",
+          "exports": {
+            "aligned_lights": {
+              "saved": 31,
+              "bytes": 3600394560,
+              "render_s": 1.2704515003133565,
+              "write_s": 3.9046033998019993,
+              "elapsed_s": 3.9679290000349283,
+              "verification": "exact",
+              "flush_s_sum": 1.6725831001531333,
+              "verify_s_sum": 1.2834956005681306
+            },
+            "debayered_lights": {
+              "saved": 31,
+              "bytes": 3085606080,
+              "render_s": 1.4167531009297818,
+              "write_s": 3.2680929992347956,
+              "elapsed_s": 3.382471499964595,
+              "verification": "exact",
+              "flush_s_sum": 1.2362285994458944,
+              "verify_s_sum": 1.1872917998116463
+            }
+          },
+          "export_stages_s": 7.350400499999523,
+          "all_export_bytes_and_stack_pixels_identical": true
+        },
+        {
+          "round": 2,
+          "mode": "faster",
+          "exports": {
+            "aligned_lights": {
+              "saved": 31,
+              "bytes": 3600394560,
+              "render_s": 1.4110553006175905,
+              "write_s": 4.1807940998114645,
+              "elapsed_s": 4.251664499985054,
+              "verification": "exact",
+              "flush_s_sum": 1.673921600682661,
+              "verify_s_sum": 1.4284777995198965
+            },
+            "debayered_lights": {
+              "saved": 31,
+              "bytes": 3085606080,
+              "render_s": 1.2698065999429673,
+              "write_s": 3.2775833010673523,
+              "elapsed_s": 3.3585353998932987,
+              "verification": "exact",
+              "flush_s_sum": 1.2283474998548627,
+              "verify_s_sum": 1.2011794997379184
+            }
+          },
+          "export_stages_s": 7.610199899878353,
+          "all_export_bytes_and_stack_pixels_identical": true
+        },
+        {
+          "round": 2,
+          "mode": "previous",
+          "exports": {
+            "aligned_lights": {
+              "saved": 31,
+              "bytes": 3600394560,
+              "render_s": 1.4974707004148513,
+              "write_s": 5.318264800589532,
+              "elapsed_s": 5.385859599802643,
+              "verification": "exact",
+              "flush_s_sum": 1.6406913003884256,
+              "verify_s_sum": 2.747253300389275
+            },
+            "debayered_lights": {
+              "saved": 31,
+              "bytes": 3085606080,
+              "render_s": 1.6070624003186822,
+              "write_s": 4.380583599908277,
+              "elapsed_s": 4.480535400100052,
+              "verification": "exact",
+              "flush_s_sum": 1.217762099346146,
+              "verify_s_sum": 2.3755386006087065
+            }
+          },
+          "export_stages_s": 9.866394999902695,
+          "all_export_bytes_and_stack_pixels_identical": true
+        }
+      ]
+    }
+  ],
+  "export_stages_s": {
+    "previous": {
+      "runs": [
+        9.856472900137305,
+        11.031100200023502,
+        15.538555100094527,
+        9.866394999902695
+      ],
+      "median": 10.448747599963099
+    },
+    "faster": {
+      "runs": [
+        7.352499000029638,
+        7.5615599998272955,
+        7.350400499999523,
+        7.610199899878353
+      ],
+      "median": 7.457029499928467
+    }
+  },
+  "verification_s_repeat": {
+    "previous": [
+      5.323589099571109,
+      5.122791900997981
+    ],
+    "faster": [
+      2.470787400379777,
+      2.629657299257815
+    ]
+  }
+}

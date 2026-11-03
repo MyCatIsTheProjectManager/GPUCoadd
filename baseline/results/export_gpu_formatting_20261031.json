@@ -1,0 +1,155 @@
+{
+  "date": "2026-10-31",
+  "cpu": "Intel Core i7-6700K",
+  "gpu": "NVIDIA GeForce RTX 3060",
+  "settings": "RCD; bicubic; spread normalization with RGB equalization; same E: output drive",
+  "order": [
+    "aligned cpu",
+    "aligned gpu",
+    "debayered gpu",
+    "debayered cpu"
+  ],
+  "method": "Each run used a fresh heat map and stack, one job at a time. Every exported file and the stack were hashed with SHA-256 and compared between the two versions.",
+  "byte_identical_files": 736,
+  "byte_identical_stacks": true,
+  "sets": {
+    "ic63": {
+      "dataset": "IC 63, 31 S50 Pro lights, full canvas 2428 x 3986",
+      "runs": [
+        {
+          "key": "aligned_lights",
+          "heat_map_s": 7.7,
+          "stack_job_s": 20.8,
+          "saved": 31,
+          "render_s": 3.8,
+          "write_s": 12.1,
+          "export_s": 12.2,
+          "gib": 3.35,
+          "verification": "exact",
+          "overlap": true,
+          "formatting": "cpu",
+          "peak_vram_gib": 0.95,
+          "warnings": [],
+          "code": "CPU formatting"
+        },
+        {
+          "key": "aligned_lights",
+          "heat_map_s": 8.1,
+          "stack_job_s": 14.1,
+          "saved": 31,
+          "render_s": 1.4,
+          "write_s": 5.3,
+          "export_s": 5.4,
+          "gib": 3.35,
+          "verification": "exact",
+          "overlap": true,
+          "formatting": "gpu",
+          "peak_vram_gib": 0.95,
+          "warnings": [],
+          "code": "GPU formatting"
+        },
+        {
+          "key": "debayered_lights",
+          "heat_map_s": 8.3,
+          "stack_job_s": 13.0,
+          "saved": 31,
+          "render_s": 1.2,
+          "write_s": 4.4,
+          "export_s": 4.5,
+          "gib": 2.87,
+          "verification": "exact",
+          "overlap": true,
+          "formatting": "gpu",
+          "peak_vram_gib": 0.95,
+          "warnings": [],
+          "code": "GPU formatting"
+        },
+        {
+          "key": "debayered_lights",
+          "heat_map_s": 7.5,
+          "stack_job_s": 18.5,
+          "saved": 31,
+          "render_s": 2.9,
+          "write_s": 9.9,
+          "export_s": 10.0,
+          "gib": 2.87,
+          "verification": "exact",
+          "overlap": true,
+          "formatting": "cpu",
+          "peak_vram_gib": 0.95,
+          "warnings": [],
+          "code": "CPU formatting"
+        }
+      ]
+    },
+    "ngc7380_337": {
+      "dataset": "NGC 7380, 337 S50 Pro lights, 2160 x 3840 region at the reference frame",
+      "runs": [
+        {
+          "key": "aligned_lights",
+          "heat_map_s": 21.5,
+          "stack_job_s": 156.1,
+          "saved": 337,
+          "render_s": 44.6,
+          "write_s": 125.5,
+          "export_s": 125.8,
+          "gib": 31.24,
+          "verification": "exact",
+          "overlap": true,
+          "formatting": "cpu",
+          "peak_vram_gib": 8.26,
+          "warnings": [],
+          "code": "CPU formatting"
+        },
+        {
+          "key": "aligned_lights",
+          "heat_map_s": 23.2,
+          "stack_job_s": 89.3,
+          "saved": 337,
+          "render_s": 17.9,
+          "write_s": 58.7,
+          "export_s": 58.9,
+          "gib": 31.24,
+          "verification": "exact",
+          "overlap": true,
+          "formatting": "gpu",
+          "peak_vram_gib": 8.26,
+          "warnings": [],
+          "code": "GPU formatting"
+        },
+        {
+          "key": "debayered_lights",
+          "heat_map_s": 24.4,
+          "stack_job_s": 88.2,
+          "saved": 337,
+          "render_s": 18.0,
+          "write_s": 57.1,
+          "export_s": 57.4,
+          "gib": 31.24,
+          "verification": "exact",
+          "overlap": true,
+          "formatting": "gpu",
+          "peak_vram_gib": 8.26,
+          "warnings": [],
+          "code": "GPU formatting"
+        },
+        {
+          "key": "debayered_lights",
+          "heat_map_s": 22.9,
+          "stack_job_s": 147.1,
+          "saved": 337,
+          "render_s": 41.1,
+          "write_s": 117.4,
+          "export_s": 117.6,
+          "gib": 31.24,
+          "verification": "exact",
+          "overlap": true,
+          "formatting": "cpu",
+          "peak_vram_gib": 8.26,
+          "warnings": [],
+          "code": "CPU formatting"
+        }
+      ]
+    }
+  }
+}

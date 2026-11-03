@@ -1,0 +1,17 @@
+{
+  "captured": "2026-10-22",
+  "os": "Windows-10-10.0.19045-SP0",
+  "python": "3.11.4 (tags/v3.11.4:d2340ef, Jun  7 2023, 05:45:37) [MSC v.1934 64 bit (AMD64)]",
+  "executable": ".venv\\Scripts\\python.exe",
+  "torch": "2.11.0+cu128",
+  "torch_cuda": "12.8",
+  "cudnn": 91900,
+  "cuda_available": true,
+  "gpu": "NVIDIA GeForce RTX 3060, 12288 MiB, 616.92",
+  "numpy": "2.4.6",
+  "opencv": "5.0.0",
+  "astropy": "8.0.2",
+  "scipy": "1.17.1",
+  "astroalign": "2.6.2",
+  "torch_wheel_index": "https://download.pytorch.org/whl/cu128"
+}

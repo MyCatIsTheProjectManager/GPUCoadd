@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.fits
+*.fit
+*.fts
+*.xisf
+*.png
+*.npy
+*.npz
+*.tmp
+*.cancel
+out/
+out_*/
+dist/

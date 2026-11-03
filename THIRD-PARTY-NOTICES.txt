@@ -1,0 +1,112 @@
+GPUCoadd third-party notices
+
+GPUCoadd is licensed under the GNU General Public License, version 3 or later (see LICENSE).
+It builds on the work of the people and projects below.
+
+
+1. CODE ADAPTED INTO GPUCOADD
+
+astroalign 2.6.2, by Martin Beroiz and contributors
+https://github.com/quatrope/astroalign
+Used in: registration_fast.py
+registration_fast.py reimplements astroalign's triangle preparation in batched form and adapts its
+_ransac function. GPUCoadd also uses astroalign itself as a library for star matching.
+Licence: MIT, reproduced in full:
+
+    MIT License
+
+    Copyright (c) 2016 Martin Beroiz
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+Ratio Corrected Demosaicing (RCD), release 2.3, by Luis Sanz Rodriguez
+https://github.com/LuisSR/RCD-Demosaicing
+The version in librtprocess and RawTherapee: Copyright (c) 2017-2018 Luis Sanz Rodriguez and
+Ingo Weyrich
+Used in: rcd_demosaic in gpucoadd.py, rcd_fused.py and rcd_kernels.py, which rewrite the algorithm
+for PyTorch and CUDA.
+Licence: GNU General Public License version 3 or later, the same terms as GPUCoadd.
+
+
+2. LIBRARIES GPUCOADD RUNS ON
+
+These are not part of GPUCoadd's source. The setup program downloads them from their own sources
+into a private environment, each under its own licence. The exact versions are in
+requirements-lock.txt.
+
+Python 3.11, python-build-standalone build     PSF License
+PyTorch                                        BSD-3-Clause
+NVIDIA CUDA libraries, shipped with PyTorch    NVIDIA's own licence terms
+astroalign                                     MIT
+Astropy, astropy-iers-data                     BSD-3-Clause
+NumPy                                          BSD-3-Clause, with parts under 0BSD, MIT, Zlib, CC0-1.0
+SciPy                                          BSD-3-Clause
+scikit-image                                   BSD-3-Clause, with parts under other licences
+OpenCV (opencv-python)                         Apache-2.0
+PyQt6 (the GPUCoadd window)                    GPL-3.0-only
+Qt 6 (PyQt6-Qt6)                               LGPL-3.0
+PyQt6-sip                                      BSD-2-Clause
+SEP (Source Extractor as a library)            LGPL-3.0-or-later
+Pillow                                         MIT-CMU
+ImageIO                                        BSD-2-Clause
+tifffile                                       BSD-3-Clause
+NetworkX                                       BSD-3-Clause
+SymPy, mpmath                                  BSD
+pyerfa                                         BSD-3-Clause
+fsspec, lazy-loader, MarkupSafe                BSD-3-Clause
+Jinja2                                         BSD-3-Clause
+filelock, PyYAML                               MIT
+packaging                                      Apache-2.0 or BSD-2-Clause
+typing_extensions                              PSF-2.0
+
+When opened from Siril, the window runs in Siril's own Python environment, with these installed
+by Siril:
+
+sirilpy                                        GPL-3.0-or-later
+PyQt6 and Qt 6                                 as above
+
+
+3. METHODS
+
+Star matching uses triangle asterisms, as described in:
+    M. Beroiz, J. B. Cabral, B. Sanchez, "Astroalign: A Python module for astronomical image
+    registration", Astronomy and Computing 32, 100384 (2020).
+
+Other published methods GPUCoadd implements:
+    RANSAC: M. A. Fischler, R. C. Bolles, Communications of the ACM 24(6), 1981.
+    Similarity fit: S. Umeyama, IEEE Transactions on Pattern Analysis and Machine Intelligence
+    13(4), 1991.
+    Cubic convolution: R. Keys, IEEE Transactions on Acoustics, Speech, and Signal Processing
+    29(6), 1981.
+    Biweight midvariance: T. C. Beers, K. Flynn, K. Gebhardt, The Astronomical Journal 100, 1990.
+    Smootherstep feathering: K. Perlin, "Improving Noise", SIGGRAPH 2002.
+
+
+4. PROGRAMS AND PRODUCTS
+
+GPUCoadd works with Siril (the Free-Astro team), and is written for lights from ZWO Seestar
+telescopes. It needs an NVIDIA GPU. GPUCoadd is an independent project
+and isn't affiliated with or endorsed by any of them. All names are their owners' trademarks.
+
+
+5. HOW IT WAS MADE
+
+GPUCoadd was developed with the help of Claude, an AI model by Anthropic, which was used for writing
+and reviewing code, writing tests, and measuring and comparing results. Design decisions, testing on
+real data and the final results are the author's responsibility.
