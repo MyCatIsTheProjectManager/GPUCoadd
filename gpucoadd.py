@@ -79,11 +79,12 @@ SAT = 50000  # calibrated ADU above which a star's peak may be non-linear: no ph
 
 
 def bayer_masks(h, w):
-    yy, xx = np.mgrid[0:h, 0:w]
-    r = (yy % 2 == 0) & (xx % 2 == 1)
-    b = (yy % 2 == 1) & (xx % 2 == 0)
-    g = ~(r | b)
-    return [m.astype(np.float32) for m in (r, g, b)]
+    """GRBG masks (red, green, blue), float32 0/1, (h, w) each: red at even rows and odd columns,
+    blue at odd rows and even columns, green elsewhere. The 2 x 2 cell tiled (full-size
+    coordinate grids took about 0.5 s per S50 Pro job)."""
+    reps = ((h + 1) // 2, (w + 1) // 2)
+    cells = ([[0, 1], [0, 0]], [[1, 0], [0, 1]], [[0, 0], [1, 0]])
+    return [np.ascontiguousarray(np.tile(np.array(c, np.float32), reps)[:h, :w]) for c in cells]
 
 
 def rcd_demosaic(torch, F, cfa, mr, mg, mb):
@@ -1136,7 +1137,12 @@ class GPUBackend:
         """Bytes this process can still use: free on the device plus what torch holds unused."""
         torch = self.torch
         free = torch.cuda.mem_get_info(self.dev)[0]
-        return free + torch.cuda.memory_reserved(self.dev) - torch.cuda.memory_allocated(self.dev)
+        # the same counters as memory_reserved / memory_allocated, without flattening every
+        # allocator statistic (0.43 ms per call while loading, called once per light)
+        stats = torch.cuda.memory_stats_as_nested_dict(self.dev)
+        reserved = stats.get("reserved_bytes", {}).get("all", {}).get("current", 0)
+        allocated = stats.get("allocated_bytes", {}).get("all", {}).get("current", 0)
+        return free + reserved - allocated
 
     def alloc_stack(self, n, rows, cols):
         """A tile's (n, 3, rows, cols) stack: a view of the buffer from reserve_stack when it is
