@@ -91,5 +91,47 @@ class ClipKernelTests(unittest.TestCase):
                 np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-3)
 
 
+class TileCoverageTests(unittest.TestCase):
+    """tile_coverage against isfinite(st).all(dim=1): counts and per-light contribution."""
+
+    def test_matches_torch(self):
+        import torch
+
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA unavailable")
+        import integrate_kernels as ik
+
+        torch.manual_seed(9)
+        for n, rows, cols in ((1, 1, 1), (5, 3, 70), (40, 17, 33), (351, 64, 64), (3, 1, 1000)):
+            with self.subTest(n=n, rows=rows, cols=cols):
+                st = torch.randn(n, 3, rows, cols, device="cuda")
+                st[torch.rand_like(st[:, :1].expand_as(st)) < 0.3] = float("nan")  # all channels
+                st[torch.rand_like(st) < 0.05] = float("nan")  # single channels
+                st[torch.rand_like(st) < 0.02] = float("inf")
+                st[torch.rand_like(st) < 0.02] = -float("inf")
+                st[0] = float("nan")  # a light with no valid sample
+                if n > 2:
+                    st[1, 1] = float("nan")  # valid in two channels only: never covered
+                valid = torch.isfinite(st).all(dim=1)
+                cov, contributed = ik.tile_coverage(st)
+                self.assertEqual(cov.dtype, torch.int32)
+                self.assertTrue(torch.equal(cov.long(), valid.sum(dim=0)))
+                self.assertTrue(torch.equal(contributed, valid.any(dim=(1, 2))))
+                self.assertFalse(bool(contributed[0]))
+
+    def test_empty_and_layout(self):
+        import torch
+
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA unavailable")
+        import integrate_kernels as ik
+
+        cov, contributed = ik.tile_coverage(torch.empty(0, 3, 4, 5, device="cuda"))
+        self.assertTrue(torch.equal(cov, torch.zeros(4, 5, dtype=torch.int32, device="cuda")))
+        self.assertEqual(contributed.shape, (0,))
+        with self.assertRaises(ValueError):
+            ik.tile_coverage(torch.zeros(2, 3, 4, 5, device="cuda").transpose(2, 3))
+
+
 if __name__ == "__main__":
     unittest.main()

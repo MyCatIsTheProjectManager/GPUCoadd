@@ -325,5 +325,39 @@ class OverlapEngineTests(unittest.TestCase):
         self.assertGreater(normz["pairs"], 0)
 
 
+class NoiseFloorTests(unittest.TestCase):
+    def test_matches_per_channel_solve(self):
+        """own_noise_floor solves the three channels together; same result as one plane fit per
+        channel (to float64 rounding), inf for lights with fewer than 100 usable pixels."""
+        import torch
+
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
+        g = torch.Generator(device=dev).manual_seed(4)
+        n, h, w = 5, 40, 60
+        yy, xx = torch.meshgrid(torch.arange(h, device=dev), torch.arange(w, device=dev), indexing="ij")
+        L = (torch.randn(n, 3, h, w, device=dev, generator=g) * 0.01 + 1 + 1e-3 * xx + 2e-3 * yy).float()
+        usable = torch.rand(n, h, w, device=dev, generator=g) < 0.7
+        usable[2] = False
+        usable[2, :9, :11] = True  # 99 pixels
+        noise = np.random.default_rng(4).uniform(0.003, 0.012, (n, 3))
+        out = overlap.own_noise_floor(L, usable, noise, max_pixels=1000)
+        gen = torch.Generator(device=dev).manual_seed(1)
+        for k in range(n):
+            cnt = int(usable[k].sum())
+            if cnt < 100:
+                self.assertTrue(np.isinf(out[k]).all())
+                continue
+            sel = torch.nonzero(usable[k].reshape(-1))[:, 0]
+            if sel.numel() > 1000:
+                sel = sel[torch.randperm(sel.numel(), generator=gen, device=dev)[:1000]]
+            Q = torch.stack([xx.reshape(-1)[sel], yy.reshape(-1)[sel], torch.ones(sel.numel(), device=dev)], 1).double()
+            for c in range(3):
+                v = L[k, c].reshape(-1)[sel].double()
+                resid = v - Q @ torch.linalg.lstsq(Q, v[:, None]).solution[:, 0]
+                var_sig = max(float(resid.var()) - noise[k, c] ** 2, 1e-30)
+                expected = overlap.CORRELATION * noise[k, c] / np.sqrt(cnt * var_sig)
+                self.assertAlmostEqual(out[k, c] / expected, 1.0, delta=1e-9)
+
+
 if __name__ == "__main__":
     unittest.main()

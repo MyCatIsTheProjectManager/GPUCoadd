@@ -1447,6 +1447,22 @@ def noise_clip_torch(torch, s, sig, kappa, iters, w=None, kept=False):
 # --------------------------------------------------------------------------- pipeline
 
 
+def _pool_ready():
+    return os.getpid()
+
+
+def start_registration_pool(workers):
+    """A process pool for register(), started before the lights load. Windows starts workers
+    with spawn, and each imports the engine on its first task (1.65 s over 8 workers, measured);
+    a no-op task per worker moves that import to the time the lights load and stars are
+    detected. register() shuts the pool down when it is done; a caller that does not reach
+    register() shuts it down itself."""
+    pool = ProcessPoolExecutor(workers)
+    for _ in range(workers):
+        pool.submit(_pool_ready)
+    return pool
+
+
 def match_to_ref(job):
     """Triangle-match the brightest stars for a similarity transform, then use it to pair up
     every detected star: the pairs give the frame's transparency (median star flux ratio vs the
@@ -1622,7 +1638,16 @@ def match_via_candidates(job):
 
 
 def register(
-    stars, ref_idx, workers, transform, progress=None, diagnostics=None, pointings=None, pixel_scales=None, groups=None
+    stars,
+    ref_idx,
+    workers,
+    transform,
+    progress=None,
+    diagnostics=None,
+    pointings=None,
+    pixel_scales=None,
+    groups=None,
+    pool=None,
 ):
     """dst(reference)->src 3x3 matrices, or None for frames that failed to match.
     astroalign is mostly pure Python (GIL-bound), so frames are matched in separate processes.
@@ -1634,7 +1659,9 @@ def register(
     against the reference through that prediction (guided_match). The anchor is the light
     nearest mid-session with a typical star count; if its link fails, the next candidates are
     tried (ANCHOR_TRIES), and if none links, the group's lights still go through neighbour
-    alignment."""
+    alignment.
+    pool: a ProcessPoolExecutor from start_registration_pool to use (and shut down), else one is
+    started here."""
     n = len(stars)
     ps = np.ones(n) if pixel_scales is None else np.asarray(pixel_scales, dtype=float)
     if ps.shape != (n,) or not (np.isfinite(ps).all() and (ps > 0).all()):
@@ -1651,7 +1678,7 @@ def register(
             raise ValueError("Pointing list must contain RA/Dec for each frame")
         ra, dec = coordinates.T
         sky = np.c_[np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)]
-    with ProcessPoolExecutor(workers) as ex:
+    with pool if pool is not None else ProcessPoolExecutor(workers) as ex:
         results = []
         for j, result in enumerate(ex.map(match_to_ref, jobs, chunksize=max(1, len(jobs) // (workers * 4))), 1):
             results.append(result)
@@ -2091,21 +2118,24 @@ def overlap_normalization(
     check_cancel=None,
     work_dir=None,
     storage_notice=None,
+    known_stats=None,
 ):
     """Compute overlap-based brightness normalization (overlap.py) for the retained lights, all of
     which must be loaded: a second pass builds their low-res images on the union canvas (and the
     per-light statistics for the photometric prior), then the network solve. progress: called per
-    light while building and per solver iteration (stage "preparing overlap matching")."""
+    light while building and per solver iteration (stage "preparing overlap matching").
+    known_stats: statistics stack() already measured, by light; only missing ones are measured."""
     import overlap
 
     stats = {}
+    known_stats = known_stats or {}
     built_lights = [0]
 
     def calibrate(i):
         if check_cancel is not None:
             check_cancel()
         cfa = backend.calibrate(i)
-        stats[i] = backend.stats(cfa)
+        stats[i] = known_stats[i] if i in known_stats else backend.stats(cfa)
         validate_light_statistics(backend, i, stats[i], spread=True)
         built_lights[0] += 1
         if progress and (built_lights[0] % 8 == 0 or built_lights[0] == len(frames)):
@@ -2199,7 +2229,12 @@ def _render_stack_tile(
             fw = backend.alloc_feather(len(here), y1 - y0, x1 - x0)
             backend.feather_tile(fw, here, mats, x0, y0, feather)
     with backend.timer("coverage"):
-        if backend.name == "gpu":
+        clip = getattr(backend, "clip", None)
+        if backend.name == "gpu" and hasattr(clip, "tile_coverage") and st.is_contiguous():
+            # one kernel instead of full-size isfinite/all temporaries; the same counts
+            valid, contributed = clip.tile_coverage(st)
+            cov, contributed = valid.cpu().numpy(), contributed.cpu().numpy()
+        elif backend.name == "gpu":
             valid = backend.torch.isfinite(st).all(dim=1)
             cov = valid.sum(dim=0).cpu().numpy()
             contributed = valid.any(dim=(1, 2)).cpu().numpy()
@@ -2294,6 +2329,7 @@ def stack(
     rgb_equal=False,
     match_gradients=False,
     workspace=None,
+    registration_pool=None,
 ):
     """pixel_scales: per light (arcsec/px) for lights from different telescopes (registration
     expects the scale ratio); reference_pool: lights the automatic reference may be chosen from
@@ -2303,6 +2339,8 @@ def stack(
     (heat-map analysis caches it for later stacks); norm="overlap" stacks with it.
     diagnostics: a dict to receive extra maps (GPU: "kept", samples surviving rejection per pixel
     and channel); the stacked image is unchanged.
+    registration_pool: start_registration_pool(...) started by the caller before loading the
+    lights, used by register(); the caller shuts it down if stack() fails before registration.
     rejection: "sigma" (default), "winsorized" (gentler) or "noise" (each sample judged against
     its own light's noise in normalized units).
     feather: blend lights in over this many pixels from their (trimmed) sensor edges (smootherstep
@@ -2425,6 +2463,7 @@ def stack(
                 pointings=pointings,
                 pixel_scales=pixel_scales,
                 groups=groups,
+                pool=registration_pool,
             )
         star_bytes = sum(s.nbytes for s in stars)
         stars.clear()
@@ -2524,6 +2563,7 @@ def stack(
                     check_cancel=workspace.check_cancel if workspace is not None else None,
                     work_dir=workspace.work_dir if workspace is not None else None,
                     storage_notice=workspace.storage_notice if workspace is not None else None,
+                    known_stats=stats,
                 )
             if on_analysis:
                 on_analysis({"normalization": normalization})
@@ -3188,37 +3228,42 @@ def main():
     canvases = {}
     for name in backends:
         backend_start = time.perf_counter()
-        if name == "gpu":
-            t0 = time.perf_counter()
-            shapes = [Layout(fits.getheader(p)).shape for p in paths]
-            be = GPUBackend(
-                raws if raws is not None else load_frames(paths),
-                pedestal,
-                n,
-                args.interp,
-                args.debayer,
-                paths=paths,
-                sizes=shapes,
-                log=print,
+        registration_pool = start_registration_pool(args.threads)
+        try:
+            if name == "gpu":
+                t0 = time.perf_counter()
+                shapes = [Layout(fits.getheader(p)).shape for p in paths]
+                be = GPUBackend(
+                    raws if raws is not None else load_frames(paths),
+                    pedestal,
+                    n,
+                    args.interp,
+                    args.debayer,
+                    paths=paths,
+                    sizes=shapes,
+                    log=print,
+                )
+                load_upload = time.perf_counter() - t0
+            else:
+                be = CPUBackend(raws, pedestal, args.threads, args.interp, args.debayer)
+                load_upload = 0.0
+            img, total, info = stack(
+                be,
+                args.tile,
+                args.threads,
+                args.transform,
+                args.select,
+                args.weight,
+                args.norm,
+                framing=args.framing,
+                coverage_only=args.coverage_only,
+                rejection=args.rejection,
+                rgb_equal=args.rgb_equal,
+                match_gradients=args.match_gradients,
+                registration_pool=registration_pool,
             )
-            load_upload = time.perf_counter() - t0
-        else:
-            be = CPUBackend(raws, pedestal, args.threads, args.interp, args.debayer)
-            load_upload = 0.0
-        img, total, info = stack(
-            be,
-            args.tile,
-            args.threads,
-            args.transform,
-            args.select,
-            args.weight,
-            args.norm,
-            framing=args.framing,
-            coverage_only=args.coverage_only,
-            rejection=args.rejection,
-            rgb_equal=args.rgb_equal,
-            match_gradients=args.match_gradients,
-        )
+        finally:
+            registration_pool.shutdown(wait=False, cancel_futures=True)
         stages = dict(be.timer.t)
         stages.pop("upload", None)
         duration_key = "analysis_s" if args.coverage_only else "stack_s"

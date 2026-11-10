@@ -152,9 +152,24 @@ class WorkerSessionTests(unittest.TestCase):
                     (path / "stop").touch()
                 return 0
 
-            serve(path, run)
+            with patch.object(WorkerSession, "warm_up") as warm:
+                serve(path, run)
             self.assertEqual([name for name, _ in seen], ["one.json", "two.json"])
             self.assertEqual(seen[0][1], seen[1][1])
+            warm.assert_called_once()  # after the first successful job only
+
+    def test_no_warm_up_after_a_failed_job(self):
+        with tempfile.TemporaryDirectory() as d, redirect_stdout(io.StringIO()):
+            path = Path(d)
+            (path / "command.txt").write_text(str(path / "request.json"))
+            (path / "ready").touch()
+            with patch.object(WorkerSession, "warm_up") as warm:
+                serve(path, Mock(return_value=1))
+            warm.assert_not_called()
+
+    def test_warm_up_never_raises(self):
+        with patch.dict(sys.modules, {"torch": None}):  # import fails
+            WorkerSession.warm_up()
 
 
 if __name__ == "__main__":

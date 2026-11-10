@@ -1154,6 +1154,10 @@ def execute(request, reporter, folder, session=None):
             return _execute(request, reporter, folder, session, workspace)
         finally:
             reporter.resource_check = None
+            pool = getattr(reporter, "registration_pool", None)
+            if pool is not None:  # register() normally shut it down already
+                pool.shutdown(wait=False, cancel_futures=True)
+                reporter.registration_pool = None
             resource_guard.set_handlers()
 
 
@@ -1259,6 +1263,10 @@ def _execute(request, reporter, folder, session, workspace):
                         )
             raise ValueError("Lights, reference, selection, or engine changed. Build the heat map again.")
         reporter.message("Validated cached alignment; star detection and registration will be reused.")
+    else:  # registration will run: its workers import the engine while the lights load
+        from gpucoadd import start_registration_pool
+
+        reporter.registration_pool = start_registration_pool(threads)
     reporter.message(f"{len(paths)} lights; work folder for this run: {folder}")
     region = request.get("region") if operation == "stack" else None
     if operation == "stack" and region is None:
@@ -1421,6 +1429,7 @@ def _execute(request, reporter, folder, session, workspace):
         reference_pool=reference_pool,
         groups=light_groups if mixed else None,
         workspace=workspace,
+        registration_pool=getattr(reporter, "registration_pool", None),
     )
     peak_vram = be.torch.cuda.max_memory_reserved() / 2**30
     reporter.validate_sources()

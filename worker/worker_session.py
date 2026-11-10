@@ -47,6 +47,19 @@ class WorkerSession:
         be.torch.cuda.reset_peak_memory_stats()
         return be
 
+    @staticmethod
+    def warm_up():
+        """Import torch and create the CUDA context once the first job (usually the folder scan,
+        which needs neither) is done, while the window waits for the user, instead of in the
+        first heat map (about 2.6 s measured). A failure here is left for a GPU job to report."""
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.zeros(1, device="cuda")
+        except Exception:
+            pass
+
     def remember(self, backend, key):
         self.backend, self.key = backend, key
 
@@ -73,6 +86,7 @@ def serve(directory, run_request, timeout=300):
     session = WorkerSession(timeout)
     last = time.monotonic()
     reason = "released"
+    warmed = False
     try:
         while not (directory / "stop").exists():
             if (directory / "ready").exists():
@@ -84,6 +98,9 @@ def serve(directory, run_request, timeout=300):
                 if code:  # discard CUDA/context state after an error or cancellation
                     reason = "operation failed or cancelled"
                     break
+                if not warmed:
+                    warmed = True
+                    session.warm_up()
                 last = time.monotonic()
             elif time.monotonic() - last >= timeout:
                 reason = "idle timeout"

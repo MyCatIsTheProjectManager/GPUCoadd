@@ -109,6 +109,34 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(diagnostics["failed"], 1)
         self.assertEqual(diagnostics["frames"][2]["anchor"], 1)
 
+    def test_supplied_pool_is_used_and_shut_down(self):
+        """register(pool=...) matches through the caller's pool (started before the lights
+        load) instead of starting its own, and shuts it down."""
+        from concurrent.futures import ProcessPoolExecutor
+
+        import gpucoadd
+
+        stars = [np.zeros((5, 3)) for _ in range(3)]
+
+        def matched(job):
+            return np.eye(3), np.ones(3), {"matched_stars": 12, "rms_px": 0.1, "scale": 1.0}
+
+        pool = ThreadPoolExecutor(2)
+        with (
+            patch("gpucoadd.ProcessPoolExecutor", side_effect=AssertionError("own pool started")),
+            patch("gpucoadd.match_to_ref", side_effect=matched),
+        ):
+            mats, _ = register(stars, 0, 2, "similarity", pool=pool)
+        self.assertTrue(all(m is not None for m in mats))
+        with self.assertRaises(RuntimeError):  # shut down
+            pool.submit(int)
+        real = gpucoadd.start_registration_pool(2)
+        try:
+            self.assertIsInstance(real, ProcessPoolExecutor)
+            self.assertIsInstance(real.submit(gpucoadd._pool_ready).result(timeout=120), int)
+        finally:
+            real.shutdown(cancel_futures=True)
+
     def test_shift_match(self):
         """Offset voting finds shifted lights (drift, dither, reframe) without a triangle search,
         and gives up on a rotated one (the caller then falls back to triangles)."""

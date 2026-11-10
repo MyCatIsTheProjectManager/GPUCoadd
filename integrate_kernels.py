@@ -101,6 +101,24 @@ extern "C" __global__ void clip_noise(const float* s, const float* sg, const flo
     out[m] = k > 0 ? mean : __int_as_float(0x7fc00000);
     if (kept) kept[m] = k;
 }
+
+// Coverage of a stack tile (n, 3, P contiguous): per pixel, the lights finite in all three
+// channels; per light, whether any pixel is. One thread per pixel, no temporaries.
+extern "C" __global__ void tile_coverage(const float* st, int n, int P, int* cov, unsigned char* any) {
+    long long p = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    bool in = p < P;
+    int k = 0;
+    for (int l = 0; l < n; ++l) {
+        bool v = false;
+        if (in) {
+            const float* a = st + (long long)l * 3 * P + p;
+            v = isfinite(a[0]) && isfinite(a[P]) && isfinite(a[2LL * P]);
+            k += v;
+        }
+        if (__any_sync(0xffffffff, v) && (threadIdx.x & 31) == 0) any[l] = 1;
+    }
+    if (in) cov[p] = k;
+}
 """
 
 _module = None
@@ -128,6 +146,20 @@ def clip_sorted(s, kappa, iters, w=None, kept=False, winsorize=False, winsor_ite
     return _launch(
         "clip_sorted", s, lambda n, M: [w, n, M, float(kappa), int(iters), winsor_iters if winsorize else 0], kept
     )
+
+
+def tile_coverage(st):
+    """As isfinite(st).all(dim=1) reduced to (frame counts (rows, cols) int32, per-light
+    contribution (n,) bool) for a contiguous (n, 3, rows, cols) float32 stack tile."""
+    n, channels, rows, cols = st.shape
+    if channels != 3 or st.dtype != torch.float32 or not st.is_contiguous():
+        raise ValueError("Expected a contiguous (n, 3, rows, cols) float32 stack tile")
+    P = rows * cols
+    cov = torch.zeros(P, device=st.device, dtype=torch.int32)
+    any_valid = torch.zeros(n, device=st.device, dtype=torch.uint8)
+    if P and n:
+        module().launch("tile_coverage", (P + 255) // 256, 256, [st, n, P, cov, any_valid])
+    return cov.reshape(rows, cols), any_valid.bool()
 
 
 def clip_noise(s, sig, kappa, iters, w=None, kept=False):

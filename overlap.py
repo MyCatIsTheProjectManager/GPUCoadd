@@ -443,8 +443,9 @@ def own_noise_floor(L, usable, noise, correlation=CORRELATION, max_pixels=50000)
         torch.arange(W, device=L.device, dtype=torch.float64),
         indexing="ij",
     )
-    out = np.full((n, 3), np.inf)
     gen = torch.Generator(device=L.device).manual_seed(1)
+    var = torch.full((n, 3), float("nan"), device=L.device, dtype=torch.float64)
+    counts = np.zeros(n)
     for k in range(n):
         if stored(L):
             L.owner.phase("uncertainty floor", k, n)
@@ -452,17 +453,21 @@ def own_noise_floor(L, usable, noise, correlation=CORRELATION, max_pixels=50000)
         cnt = int(u.sum())
         if cnt < 100:
             continue
+        counts[k] = cnt
         sel = torch.nonzero(u.reshape(-1))[:, 0]
         if sel.numel() > max_pixels:
             sel = sel[torch.randperm(sel.numel(), generator=gen, device=L.device)[:max_pixels]]
         Q = torch.stack(
             [XX.reshape(-1)[sel], YY.reshape(-1)[sel], torch.ones(sel.numel(), device=L.device, dtype=torch.float64)], 1
         )
-        for c in range(3):
-            v = L[k, c].reshape(-1)[sel].double()
-            resid = v - Q @ torch.linalg.lstsq(Q, v[:, None]).solution[:, 0]
-            var_sig = max(float(resid.var()) - noise[k, c] ** 2, 1e-30)
-            out[k, c] = correlation * noise[k, c] / np.sqrt(cnt * var_sig)
+        # the three channels share the design matrix: one solve, read back once after the loop
+        V = L[k].reshape(3, -1)[:, sel].double().T
+        var[k] = (V - Q @ torch.linalg.lstsq(Q, V).solution).var(0)
+    var = var.cpu().numpy()
+    out = np.full((n, 3), np.inf)
+    ok = counts > 0
+    var_sig = np.maximum(var[ok] - np.asarray(noise, np.float64)[ok] ** 2, 1e-30)
+    out[ok] = correlation * np.asarray(noise, np.float64)[ok] / np.sqrt(counts[ok, None] * var_sig)
     return out
 
 
