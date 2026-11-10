@@ -40,6 +40,66 @@ class SortExperimentTests(unittest.TestCase):
                         )
                     )
 
+    def test_values_only_sort(self):
+        """sort_values gives exactly torch.sort's values (NaN last, infinities, ties, -0.0)."""
+        import torch
+
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA unavailable")
+        from sort_kernels import sort_values
+
+        torch.manual_seed(54)
+        for n in (1, 2, 31, 32, 33, 64, 120, 256, 344, 512, 513, 587, 1024):
+            with self.subTest(frames=n):
+                backing = torch.randn(n, 74, device="cuda")
+                x = backing[:, :37]
+                x[torch.rand_like(x) < 0.2] = float("nan")
+                x[:, 0], x[:, 1], x[:, 2] = float("nan"), 1.0, -0.0
+                x[::2, 4] = 0.0  # +0.0 and -0.0 together
+                x[1::2, 4] = -0.0
+                x[::3, 5:9] = 2.5  # many ties
+                x[0, 3] = float("inf")
+                if n > 1:
+                    x[1, 3] = -float("inf")
+                values = sort_values(x)
+                ref = torch.sort(x, dim=0).values
+                torch.testing.assert_close(values, ref, rtol=0, atol=0, equal_nan=True)
+
+    def test_backend_values_only_path(self):
+        """Equal weights, no feathering, sigma or winsorized: the values-only sort is used and the
+        stack is bit-identical to the torch.sort path; with weights the indexed sort is used."""
+        from unittest.mock import patch
+
+        import numpy as np
+        import torch
+
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA unavailable")
+        import gpucoadd as g
+        import sort_kernels as sk
+
+        torch.manual_seed(55)
+        backend = g.GPUBackend.__new__(g.GPUBackend)
+        backend.torch, backend.dev = torch, torch.device("cuda")
+        backend.clip = g.gpu_clip()[0]
+        for n in (31, 344, 587):
+            data = 100 + torch.randn(n, 3, 6, 9, device="cuda")
+            data[:, :, 0, 0] = float("nan")
+            data[: n // 2, 1, 2, :] = float("nan")
+            data[::3, :, 1, :] = 100.0
+            for mode in ("sigma", "winsorized"):
+                with self.subTest(frames=n, mode=mode):
+                    backend.sort = None
+                    expected, ec = backend.integrate(data, 3.0, 3, None, True, mode)
+                    backend.sort = sk
+                    with patch.object(sk, "sort", wraps=sk.sort) as indexed:
+                        actual, ac = backend.integrate(data, 3.0, 3, None, True, mode)
+                        self.assertEqual(indexed.call_count, 0)
+                        np.testing.assert_array_equal(ac, ec)
+                        np.testing.assert_array_equal(actual, expected)
+                        backend.integrate(data, 3.0, 3, np.ones(n, np.float32), True, mode)
+                        self.assertGreater(indexed.call_count, 0)
+
     def test_weight_noise_associations_and_rejection(self):
         import torch
 

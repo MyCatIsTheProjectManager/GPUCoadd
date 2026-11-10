@@ -9,8 +9,7 @@ working space for stacking tiles. Where data is held never changes a pixel.
 """
 
 from raw_storage import GIB, available_ram
-
-SYSTEM_RAM = 128 << 20  # RAM left free for Windows; the live checks (resource_guard) keep the same floor
+from resource_guard import RAM_RESERVE as SYSTEM_RAM  # RAM left free for Windows, as in the live checks
 
 
 def desktop_vram(total_gpu):

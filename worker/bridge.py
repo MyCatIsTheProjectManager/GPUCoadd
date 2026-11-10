@@ -1357,8 +1357,6 @@ def _execute(request, reporter, folder, session, workspace):
     else:
         reporter.message("Preparing GPU kernels and loading lights; new kernels compile once after an update.")
         if session is not None:
-            import torch
-
             if torch.cuda.is_initialized():
                 torch.cuda.reset_peak_memory_stats()
         be = GPUBackend(

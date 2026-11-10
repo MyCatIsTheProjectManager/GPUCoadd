@@ -8,7 +8,7 @@ from unittest.mock import patch
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from gpucoadd import GPUBackend, frames_for_region, frames_reaching, stack
+from gpucoadd import GPUBackend, footprint_reaches, footprints_reach, frame_footprint, frames_for_region, frames_reaching, stack
 
 
 def forward(angle=0.0, tx=0.0, ty=0.0, px=0.0, py=0.0):
@@ -62,6 +62,32 @@ class ReachTests(unittest.TestCase):
                 with self.subTest(d=d, edge=edge, f=f.tolist()):
                     truth = contributes(minv, w, h, width, height, edge)
                     self.assertTrue(not truth or frames_reaching([minv], [0], w, h, width, height, edge) == [0])
+
+    def test_vectorized_equals_per_footprint(self):
+        """footprints_reach (tile selection) gives exactly footprint_reaches' answer, including
+        footprints touching the grown tile, axis-aligned ones on integer bounds and degenerate quads."""
+        rng = np.random.default_rng(7)
+        quads = []
+        for _ in range(4000):
+            w, h = (int(v) for v in rng.integers(4, 60, 2))
+            p = rng.normal(0, 3e-3, 2) if rng.random() < 0.3 else (0, 0)
+            angle = 0.0 if rng.random() < 0.3 else rng.uniform(-np.pi, np.pi)
+            f = forward(angle, rng.integers(-70, 70), rng.integers(-70, 70), *p)
+            if rng.random() < 0.5:
+                f[:2, 2] += rng.uniform(-1, 1, 2)
+            try:
+                quads.append(frame_footprint(np.linalg.inv(f), w, h, int(rng.choice([0, 2]))))
+            except ValueError:
+                continue
+        quads.append(np.array([[0, 0], [10, 0], [10, 0], [0, 0]], float))  # zero area
+        quads.append(np.array([[-1, 5], [5, 5], [5, 9], [-1, 9]], float))  # edge on x = -1
+        quads.append(np.array([[-9, -9], [-1, -9], [-1, -1], [-9, -1]], float))  # corner at (-1, -1)
+        quads = np.array(quads)
+        for width, height in ((30, 25), (1, 1), (64, 7)):
+            with self.subTest(width=width, height=height):
+                expected = [footprint_reaches(q, width, height) for q in quads]
+                self.assertEqual(footprints_reach(quads, width, height).tolist(), expected)
+        self.assertEqual(footprints_reach(np.zeros((0, 4, 2)), 5, 5).tolist(), [])
 
     def test_plan_keeps_reference_and_full_field_selection(self):
         # Reference (index 1) lies outside the crop but must still be loaded for normalization.

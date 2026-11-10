@@ -38,6 +38,7 @@ from astropy.io import fits
 from scipy.spatial import cKDTree
 
 from fits_input import Layout, read_light
+from tileplan import INTEGRATION_BYTES, RESERVE as GPU_RESERVE
 
 # GRBG Bayer, for crops that start on an even row and column
 K_RB = np.array([[1, 2, 1], [2, 4, 2], [1, 2, 1]], np.float32) / 4
@@ -1124,8 +1125,8 @@ class GPUBackend:
 
     # integration temporaries per light and pixel, measured peak (sort values + indices, clipping
     # state, weights; noise mode also the gathered per-sample noise), bytes
-    INTEGRATE_BYTES = {"sigma": 28, "winsorized": 32, "noise": 54}
-    VRAM_RESERVE = 1 << 30  # left for the CUDA context and the display
+    INTEGRATE_BYTES = INTEGRATION_BYTES
+    VRAM_RESERVE = GPU_RESERVE  # left for the CUDA context and the display
 
     def free_vram(self):
         """Bytes this process can still use: free on the device plus what torch holds unused."""
@@ -1306,8 +1307,24 @@ class GPUBackend:
         if rejection == "noise":
             nz = torch.from_numpy(np.asarray(noise, np.float32)).to(self.dev)
         fw = None if feather is None else feather.reshape(n, plane)
+        sorter = getattr(self, "sort", None)
+        # Frame indices are needed only to gather weights, feather weights or per-sample noise in
+        # sorted order; without them a values-only sort gives the same sorted values, faster.
+        values_only = wt is None and fw is None and rejection != "noise" and hasattr(sorter, "sort_values")
         for m0 in range(0, flat.shape[1], chunk):
-            sorter = getattr(self, "sort", None)
+            if values_only:
+                values = sorter.sort_values(flat[:, m0 : m0 + chunk])
+                res = (
+                    clip.clip_sorted(values, kappa, iters, None, kept, rejection == "winsorized", WINSOR_ITERS)
+                    if clip is not None
+                    else sigma_clip_sorted_torch(torch, values, kappa, iters, None, kept, rejection == "winsorized")
+                )
+                if kept:
+                    out[m0 : m0 + chunk], count[m0 : m0 + chunk] = res
+                else:
+                    out[m0 : m0 + chunk] = res
+                del values, res
+                continue
             srt = (
                 sorter.sort(flat[:, m0 : m0 + chunk])
                 if sorter is not None
@@ -1887,6 +1904,34 @@ def footprint_reaches(poly, width, height):
             return False
     x, y = poly.T
     return bool(abs(x @ np.roll(y, -1) - y @ np.roll(x, -1)) > 0)
+
+
+def footprints_reach(polys, width, height, margin=1e-6):
+    """footprint_reaches for many footprints at once: polys (N x 4 x 2, canvas coordinates of the
+    tile) -> N bools. Footprints are convex quadrilaterals, so the separating-axis test on x, y
+    and their four edge normals decides overlap with positive area. Pairs within `margin` px of
+    touching on some axis, and quads that are degenerate or not convex, are decided by
+    footprint_reaches itself, so the result is the same as calling it for each footprint."""
+    polys = np.asarray(polys, np.float64).reshape(-1, 4, 2)
+    if not len(polys):
+        return np.zeros(0, bool)
+    rect = np.array([[-1, -1], [width, -1], [width, height], [-1, height]], np.float64)
+    edges = np.roll(polys, -1, axis=1) - polys
+    turns = edges[..., 0] * np.roll(edges[..., 1], -1, axis=1) - edges[..., 1] * np.roll(edges[..., 0], -1, axis=1)
+    nxt = np.roll(polys, -1, axis=1)
+    area = 0.5 * (polys[..., 0] * nxt[..., 1] - polys[..., 1] * nxt[..., 0]).sum(1)  # shoelace
+    lengths = np.hypot(edges[..., 0], edges[..., 1])
+    convex = (np.all(turns > margin, axis=1) | np.all(turns < -margin, axis=1)) & np.all(lengths > margin, axis=1)
+    normals = np.stack([-edges[..., 1], edges[..., 0]], -1) / np.where(lengths > 0, lengths, 1)[..., None]
+    axes = np.concatenate([np.broadcast_to(np.eye(2), (len(polys), 2, 2)), normals], axis=1)  # N x 6 x 2
+    p = np.einsum("nvk,nak->nav", polys, axes)
+    r = np.einsum("vk,nak->nav", rect, axes)
+    overlap = np.minimum(p.max(-1) - r.min(-1), r.max(-1) - p.min(-1)).min(-1)  # > 0: no separating axis
+    reach = convex & (overlap > margin) & (np.abs(area) > margin)
+    separated = overlap < -margin
+    for k in np.flatnonzero(~reach & ~separated):
+        reach[k] = footprint_reaches(polys[k], width, height)
+    return reach
 
 
 def frames_reaching(mats, frames, w, h, width, height, edge=0):
@@ -2673,8 +2718,8 @@ def stack(
     every_light = os.environ.get("GPUCOADD_TILE_LIGHTS") == "all"
     pos = {i: k for k, i in enumerate(active)}
     polys = {i: frame_footprint(mats[i], *frame_size(W, H, i), getattr(backend, "edge", 0)) for i in active}
-    lo_xy = {i: p.min(0) for i, p in polys.items()}
-    hi_xy = {i: p.max(0) for i, p in polys.items()}
+    quads = np.array([polys[i] for i in active], np.float64).reshape(-1, 4, 2)
+    active_array = np.array(active, dtype=np.int64)
     tile_requested = tile
     tile_plan = {"requested": tile_requested, "automatic": tile_requested == 0, "candidates": []}
     if not isinstance(tile, int) or tile < 0:
@@ -2696,15 +2741,7 @@ def stack(
                         selections[y0, x0] = (
                             active
                             if every_light
-                            else [
-                                i
-                                for i in active
-                                if lo_xy[i][0] < x1 + 1
-                                and hi_xy[i][0] > x0 - 1
-                                and lo_xy[i][1] < y1 + 1
-                                and hi_xy[i][1] > y0 - 1
-                                and footprint_reaches(polys[i] - (x0, y0), x1 - x0, y1 - y0)
-                            ]
+                            else active_array[footprints_reach(quads - (x0, y0), x1 - x0, y1 - y0)].tolist()
                         )
                         tile_lights.append(len(selections[y0, x0]))
                 estimate = memory_estimate(
@@ -2981,9 +3018,21 @@ def write_png(path, image):
         temp.unlink(missing_ok=True)
 
 
+def preview_image(img):
+    """The stretched 8-bit RGB preview of a stack, a quarter of its size (at least one pixel).
+    Preview pixels not fully covered (any source pixel non-finite in any channel) stay NaN for
+    autostretch, so uncovered canvas never enters its statistics and comes out black."""
+    size = (max(1, img.shape[1] // 4), max(1, img.shape[0] // 4))
+    uncovered = (~np.isfinite(img).all(-1)).astype(np.float32)
+    small = cv2.resize(np.nan_to_num(img).astype(np.float32), size, interpolation=cv2.INTER_AREA)
+    # area weights times zero stay exactly zero, so this test is exact
+    gaps = cv2.resize(uncovered, size, interpolation=cv2.INTER_AREA) != 0
+    small[gaps] = np.nan
+    return (autostretch(small) * 255).astype(np.uint8)
+
+
 def preview(img, path):
-    small = cv2.resize(np.nan_to_num(img), (img.shape[1] // 4, img.shape[0] // 4), interpolation=cv2.INTER_AREA)
-    write_png(path, (autostretch(small) * 255).astype(np.uint8)[..., ::-1])
+    write_png(path, preview_image(img)[..., ::-1])
 
 
 def coverage_preview(coverage, frames, path, predicted=False):
