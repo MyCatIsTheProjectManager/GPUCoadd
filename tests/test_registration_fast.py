@@ -86,6 +86,50 @@ class TrianglePreparationTests(unittest.TestCase):
                     self.assertEqual(outcomes[0], outcomes[1])
                     self.assertEqual(outcomes[0] == "failed", not matches)
 
+    def test_seed_check_matches_dense_count(self):
+        """SeedCheck.possible through its first-vertex index agrees seed by seed with the dense
+        count over every pair (the previous implementation), for matching and unrelated lists of
+        60 and 120 stars: never stricter, so no seed the exact test could accept is skipped."""
+
+        def dense(check, seeds):
+            a, shift, ill = check.fit(seeds)
+            mapped = np.einsum("bij,mj->bmi", a, check.points) + shift[:, None]
+            close = np.sqrt(((mapped[:, :, None] - check.targets[None, None]) ** 2).sum(-1)) < check.limit
+            fits = close[:, check.idx_s[:, 0], check.idx_t[:, 0]]
+            for v in (1, 2):
+                fits &= close[:, check.idx_s[:, v], check.idx_t[:, v]]
+            count = fits.sum(1) - fits[np.arange(len(seeds)), seeds]
+            return ill | (count >= check.min_matches)
+
+        rng = np.random.default_rng(23)
+        for n in (60, 120):
+            ref = rng.uniform(0, 3800, (n, 2))
+            c, s = np.cos(0.4), np.sin(0.4)
+            good = (ref - 1900) @ np.array([[c, -s], [s, c]]).T + 1900 + (25, -9) + rng.normal(0, 0.3, (n, 2))
+            good = good[rng.permutation(n)]
+            good[: n // 3] = rng.uniform(0, 3800, (n // 3, 2))
+            for src, label in ((good, "matching"), (rng.uniform(0, 3800, (n, 2)), "unrelated")):
+                captured = []
+
+                def capture(data, model, thresh, min_matches):
+                    captured.append(fast.SeedCheck(data, model, thresh, min_matches))
+                    raise aa.MaxIterError("captured")
+
+                with patch.object(fast, "_ransac", capture):
+                    fast._adapter.cache_clear()
+                    with self.assertRaises(aa.MaxIterError):
+                        fast.find_transform(src, ref, max_control_points=n)
+                fast._adapter.cache_clear()
+                check = captured[0]
+                seeds = np.arange(len(check.idx_s))
+                expected = np.concatenate([dense(check, seeds[k : k + 256]) for k in range(0, len(seeds), 256)])
+                actual = np.concatenate([check.possible(seeds[k : k + 256]) for k in range(0, len(seeds), 256)])
+                with self.subTest(stars=n, lists=label):
+                    self.assertFalse((expected & ~actual).any())  # never stricter
+                    self.assertTrue(np.array_equal(expected, actual))
+                    if label == "matching":
+                        self.assertTrue(actual.any())
+
     def test_matching_is_repeatable(self):
         """With noisy stars, astroalign's result depends on its unseeded shuffle (M 42: 4 of 131
         lights moved by up to 0.06 px between two heat maps); the seeded order gives one answer."""

@@ -74,20 +74,33 @@ def _cached(shape, dtype, data, neighbours_count):
 
 
 RANSAC_MARGIN_PX = 1e-6  # batched residuals vs astroalign's: rounding differs by ~1e-9 px
+LOOSE_PX = 1e-3  # SeedCheck's distance form (|x|^2 + |y|^2 - 2xy) vs the direct one
 
 
 class SeedCheck:
     """Whether astroalign's RANSAC step seeded by a candidate triangle pair (a row of data) could
     accept: at least min_matches other pairs whose three vertices all lie within thresh of their
     match under the seed's 3-point similarity. Batched and counted against thresh +
-    RANSAC_MARGIN_PX, so a seed found impossible certainly fails the exact test; ill-conditioned
-    fits count as possible (left to the exact test)."""
+    RANSAC_MARGIN_PX (+ LOOSE_PX for the distance form), so a seed found impossible certainly
+    fails the exact test; ill-conditioned fits count as possible (left to the exact test). Only
+    pairs whose first vertex is close are examined (an index by first vertex): a failed search
+    over 120 stars took 10-14 s when every seed was checked against every pair, about 3 s now."""
 
     def __init__(self, data, model, thresh, min_matches):
         self.idx_s, self.idx_t = data[:, :, 0], data[:, :, 1]
         self.points = np.asarray(model.source, np.float64)
         self.targets = np.asarray(model.target, np.float64)
         self.limit, self.min_matches = thresh + RANSAC_MARGIN_PX, min_matches
+        # pairs indexed by their first vertex's (source, target) stars: only pairs whose first
+        # vertex lands near its target under a seed's fit can support that seed
+        q = len(self.targets)
+        key = self.idx_s[:, 0].astype(np.int64) * q + self.idx_t[:, 0]
+        self.by_first = np.argsort(key, kind="stable")
+        self.first_keys = key[self.by_first]
+        self.target_norms = (self.targets**2).sum(1)
+        # |x|^2 + |y|^2 - 2xy rounds differently from the direct distance (about 1e-8 px^2 at
+        # canvas coordinates); the looser bound keeps every seed the direct test would pass
+        self.limit2 = (self.limit + LOOSE_PX) ** 2
 
     def fit(self, seeds):
         """Umeyama similarity of each seed's 3 point pairs (as skimage's estimate_transform
@@ -111,14 +124,26 @@ class SeedCheck:
     def possible(self, seeds):
         seeds = np.asarray(seeds)
         a, shift, ill = self.fit(seeds)
-        # every source star mapped by each seed's fit, then every star-to-star distance
+        # every source star mapped by each seed's fit, then which targets lie within the limit
         mapped = np.einsum("bij,mj->bmi", a, self.points) + shift[:, None]
-        close = np.sqrt(((mapped[:, :, None] - self.targets[None, None]) ** 2).sum(-1)) < self.limit  # (b, m, q)
-        fits = close[:, self.idx_s[:, 0], self.idx_t[:, 0]]
+        d2 = (mapped**2).sum(-1)[:, :, None] + self.target_norms - 2 * mapped @ self.targets.T
+        close = d2 < self.limit2  # (b, m, q)
+        # candidate supporting pairs: those whose first vertex is close, found through the index
+        b, s, t = np.nonzero(close)
+        key = s.astype(np.int64) * close.shape[2] + t
+        lo = np.searchsorted(self.first_keys, key, "left")
+        counts = np.searchsorted(self.first_keys, key, "right") - lo
+        seed_of = np.repeat(b, counts)
+        starts = np.repeat(lo - (np.cumsum(counts) - counts), counts)
+        pair = self.by_first[starts + np.arange(len(seed_of))]
+        fits = close[seed_of, self.idx_s[pair, 1], self.idx_t[pair, 1]]
+        fits &= close[seed_of, self.idx_s[pair, 2], self.idx_t[pair, 2]]
+        count = np.bincount(seed_of[fits], minlength=len(seeds))
+        rows = np.arange(len(seeds))
+        itself = close[rows, self.idx_s[seeds, 0], self.idx_t[seeds, 0]]  # the seed is not a test pair
         for v in (1, 2):
-            fits &= close[:, self.idx_s[:, v], self.idx_t[:, v]]
-        count = fits.sum(1) - fits[np.arange(len(seeds)), seeds]  # the seed itself is not a test pair
-        return ill | (count >= self.min_matches)
+            itself &= close[rows, self.idx_s[seeds, v], self.idx_t[seeds, v]]
+        return ill | (count - itself >= self.min_matches)
 
 
 RANSAC_SEED = 0  # a fixed candidate order, so the same lights always give the same alignment
