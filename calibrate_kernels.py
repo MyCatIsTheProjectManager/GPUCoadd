@@ -11,7 +11,7 @@ from cuda_kernels import Module
 
 SOURCE = r"""
 // grid: (pixel blocks, B): one row of blocks per crop, 32-bit pixel arithmetic
-extern "C" __global__ void calibrate_pad(const long long* desc, float* out, int B, int H, int W) {
+extern "C" __global__ void calibrate_pad(const long long* desc, float* out, int B, int H, int W, int unit) {
     int q = blockIdx.y;
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= H * W) return;
@@ -28,7 +28,10 @@ extern "C" __global__ void calibrate_pad(const long long* desc, float* out, int 
     float value = (float)((unsigned short)raw[(long long)iy * d[2] + (long long)ix * d[3]]);
     float pedestal = __int_as_float((int)d[10]);
     float corrected = __fsub_rn(value, pedestal);
-    out[p] = __fmul_rn(corrected, flat[(long long)iy * d[4] + (long long)ix * d[5]]);
+    float v = __fmul_rn(corrected, flat[(long long)iy * d[4] + (long long)ix * d[5]]);
+    // unit: RCD's input, (calibrated + pedestal) / 65535 as torch computes it on the GPU: the sum,
+    // then times float32(1 / 65535) (0x37800080; torch divides by a scalar with its reciprocal)
+    out[p] = unit ? __fmul_rn(__fadd_rn(v, pedestal), __int_as_float(0x37800080)) : v;
 }
 """
 
@@ -42,11 +45,13 @@ def module():
     return _module
 
 
-def calibrate_pad(raws, flats, pedestals, boxes, out):
+def calibrate_pad(raws, flats, pedestals, boxes, out, unit=False):
     """Write (B,H,W) float32 out; raws are int16 bit views of unsigned sensor data.
 
     Raw/flat tensors may be strided. Metadata contains device pointers and strides,
     crop bounds and the exact float32 pedestal bits. All work uses the current stream.
+    unit: write (calibrated + pedestal) / 65535 instead, the staged RCD's input, bit for bit as
+    torch computes it afterwards on the GPU (the sum times the float32 reciprocal of 65535).
     """
     B, H, W = out.shape
     if not (len(raws) == len(flats) == len(pedestals) == len(boxes) == B):
@@ -78,4 +83,4 @@ def calibrate_pad(raws, flats, pedestals, boxes, out):
         desc[q] = [raw.data_ptr(), flat.data_ptr(), *raw.stride(), *flat.stride(), a, b, c, d, bits]
     if B:
         metadata = torch.from_numpy(desc).to(out.device)
-        module().launch("calibrate_pad", ((H * W + 255) // 256, B), 256, [metadata, out, B, H, W])
+        module().launch("calibrate_pad", ((H * W + 255) // 256, B), 256, [metadata, out, B, H, W, 1 if unit else 0])

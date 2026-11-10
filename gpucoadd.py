@@ -1202,6 +1202,9 @@ class GPUBackend:
             nonlocal calibration_buffer
             bx = np.array([boxes[j] for j in js])  # a, b, c, d
             hmax, wmax = int((bx[:, 1] - bx[:, 0]).max()), int((bx[:, 3] - bx[:, 2]).max())
+            # RCD's scaling, (calibrated + pedestal) / 65535 before and x 65535 - pedestal after,
+            # done inside the calibration and RCD kernels when both are in use (same roundings)
+            fold = self.debayer == "rcd" and self.calibration is not None and getattr(self.rcd, "folds_scale", False)
             with T("calibrate"):
                 needed = len(js) * hmax * wmax
                 if calibration_buffer is None or calibration_buffer.numel() < needed:
@@ -1217,6 +1220,7 @@ class GPUBackend:
                             [self.pedestals[k] for k in slots],
                             bx,
                             cal,
+                            unit=fold,
                         )
                     else:
                         crops = [self.raw_crop(k, box) for k, box in zip(slots, bx)]
@@ -1224,7 +1228,9 @@ class GPUBackend:
                             self.flat_inv[tuple(self.raw[k].shape)][a:b, c:d] for k, (a, b, c, d) in zip(slots, bx)
                         ]
                         local = np.array([[0, b - a, 0, d - c] for a, b, c, d in bx])
-                        self.calibration.calibrate_pad(crops, flats, [self.pedestals[k] for k in slots], local, cal)
+                        self.calibration.calibrate_pad(
+                            crops, flats, [self.pedestals[k] for k in slots], local, cal, unit=fold
+                        )
                         del crops, flats
                 else:
                     for q, j in enumerate(js):
@@ -1241,7 +1247,9 @@ class GPUBackend:
                 ms = self.masks[:, :hmax, :wmax]
                 if self.debayer == "rcd":
                     peds = [self.pedestals[frames[j] if self.slot is None else self.slot[frames[j]]] for j in js]
-                    if len(set(peds)) == 1:  # one sensor: scalar path, as before
+                    if fold:
+                        rgb = self.rcd(torch, F, cal, *ms, pedestals=torch.tensor(peds, device=self.dev))
+                    elif len(set(peds)) == 1:  # one sensor: scalar path, as before
                         rgb = self.rcd(torch, F, (cal + peds[0]) / 65535, *ms) * 65535 - peds[0]
                     else:
                         ped = torch.tensor(peds, device=self.dev)[:, None, None]

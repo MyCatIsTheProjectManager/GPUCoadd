@@ -82,11 +82,11 @@ class DeviceLifetimeTests(unittest.TestCase):
         pointers = []
         shapes = []
 
-        def calibrate(*args):
+        def calibrate(*args, **kwargs):
             self.assertTrue(all(ref() is None for ref in rgb_refs), "previous batch RGB is still live")
             pointers.append(args[-1].data_ptr())
             shapes.append(tuple(args[-1].shape))
-            return original_cal(*args)
+            return original_cal(*args, **kwargs)
 
         def warp(rgb, *args, **kwargs):
             rgb_refs.append(weakref.ref(rgb))

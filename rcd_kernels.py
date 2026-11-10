@@ -110,13 +110,17 @@ extern "C" __global__ void opposite(const float* raw,const float* greens,const f
     rb[batch*2*plane+j]=rbsel(own,opp,c,o);
     rb[batch*2*plane+plane+j]=rbsel(opp,own,c,o);
 }
+// peds: null, or a pedestal per batch item: write v * 65535 - pedestal (ADU), two roundings as torch
+__device__ __forceinline__ float adu(float v,const float* peds,int batch) {
+    return peds?__fsub_rn(__fmul_rn(v,65535.0f),peds[batch]):v;
+}
 extern "C" __global__ void finish(const float* greens,const float* rb,const float* vh,const float* gm,
-                                 float* rgb,int gs,int n,int h,int w) {
+                                 float* rgb,int gs,const float* peds,int n,int h,int w) {
     LOCATE;Image G={greens+batch*plane,h,w,y,x};float g=G(0,0),d=vh[i];
-    rgb[batch*3*plane+plane+j]=g;
+    rgb[batch*3*plane+plane+j]=adu(g,peds,batch);
     if(gm[y*gs+x]<=0) {
-        rgb[batch*3*plane+j]=rb[batch*2*plane+j];
-        rgb[batch*3*plane+2*plane+j]=rb[batch*2*plane+plane+j];return;
+        rgb[batch*3*plane+j]=adu(rb[batch*2*plane+j],peds,batch);
+        rgb[batch*3*plane+2*plane+j]=adu(rb[batch*2*plane+plane+j],peds,batch);return;
     }
     for(int ch=0;ch<2;ch++) {
         Image C={rb+(batch*2+ch)*plane,h,w,y,x};
@@ -126,7 +130,7 @@ extern "C" __global__ void finish(const float* greens,const float* rb,const floa
         float eg=cgrad(g,G(0,2),C(0,1),C(0,-1),C(0,3));
         float v=dest(ng,C(1,0),G(1,0),sg,C(-1,0),G(-1,0));
         float hor=dest(eg,C(0,-1),G(0,-1),wg,C(0,1),G(0,1));
-        rgb[batch*3*plane+ch*2*plane+j]=csel(gm[y*gs+x],g,d,hor,v,C(0,0));
+        rgb[batch*3*plane+ch*2*plane+j]=adu(csel(gm[y*gs+x],g,d,hor,v,C(0,0)),peds,batch);
     }
 }
 """
@@ -141,12 +145,17 @@ def module():
     return _module
 
 
-def rcd_demosaic_staged(torch, F, cfa, mr, mg, mb):
+def rcd_demosaic_staged(torch, F, cfa, mr, mg, mb, pedestals=None):
+    """pedestals: optional float32 tensor, one per batch item: the result is then
+    rgb * 65535 - pedestal (ADU), as computing it in torch afterwards."""
     h, w = cfa.shape[-2:]
     if not cfa.is_cuda or cfa.dtype != torch.float32 or min(h, w) <= 4:
         from rcd_fused import rcd_demosaic_fused
 
-        return rcd_demosaic_fused(torch, F, cfa, mr, mg, mb)
+        rgb = rcd_demosaic_fused(torch, F, cfa, mr, mg, mb)
+        if pedestals is None:
+            return rgb
+        return rgb * 65535 - pedestals.reshape(-1, *([1] * (rgb.ndim - 1)))
     cfa = cfa.contiguous()
     masks = [m.to(dtype=cfa.dtype) for m in (mr, mg, mb)]
     masks = [m if m.stride(-1) == 1 else m.contiguous() for m in masks]
@@ -165,5 +174,11 @@ def rcd_demosaic_staged(torch, F, cfa, mr, mg, mb):
     del bands
     launch("opposite", [cfa, g, dirs, masks[0], masks[2], rb, rs, bs])
     del dirs
-    launch("finish", [g, rb, vh, masks[1], rgb, gs])
+    peds = None if pedestals is None else pedestals.to(device=cfa.device, dtype=torch.float32).contiguous()
+    if peds is not None and peds.numel() != batch:
+        raise ValueError("One pedestal per batch item expected")
+    launch("finish", [g, rb, vh, masks[1], rgb, gs, peds])
     return rgb.reshape(*cfa.shape[:-2], 3, h, w)
+
+
+rcd_demosaic_staged.folds_scale = True  # warp_tile: calibrate_pad(unit=True), pedestals= here
