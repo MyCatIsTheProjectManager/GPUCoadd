@@ -43,6 +43,10 @@ from tileplan import INTEGRATION_BYTES, RESERVE as GPU_RESERVE
 # GRBG Bayer, for crops that start on an even row and column
 K_RB = np.array([[1, 2, 1], [2, 4, 2], [1, 2, 1]], np.float32) / 4
 K_G = np.array([[0, 1, 0], [1, 4, 1], [0, 1, 0]], np.float32) / 4
+# source pixels per warp_tile call with RCD (lights per call: this over the crop size, at most 32).
+# NGC 2175, 2048 px region, 322 lights: 2 M 7.53 s, 4 M 6.69 s, 8 M 6.45 s, 16 M 6.32 s; peak GPU
+# memory +0.29 GiB at 8 M over 2 M, well inside tileplan's RCD scratch estimate; pixels identical.
+RCD_BATCH_PIXELS = 8_000_000
 N_DETECT = 200  # stars kept per frame, brightest first
 N_MATCH = 60  # brightest stars used for triangle matching
 MAX_FEATHER = 1000  # feather distance limit, px
@@ -1193,7 +1197,7 @@ class GPUBackend:
         torch, F, T = self.torch, self.F, self.timer
         boxes = [tile_source_box(mats[i], x0, x1, y0, y1, *self.sizes[i]) for i in frames]
         sizes = [(b - a) * (d - c) for a, b, c, d in (bx for bx in boxes if bx is not None)] or [1]
-        batch = max(1, min(32, int((2e6 if self.debayer == "rcd" else 16e6) // max(sizes))))
+        batch = max(1, min(32, int((RCD_BATCH_PIXELS if self.debayer == "rcd" else 16e6) // max(sizes))))
         # Tile-local capacity only: reused within the unchanged batches, then released
         # before integration. Batch locals must die before allocating the next RGB image.
         calibration_buffer = None

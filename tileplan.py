@@ -16,9 +16,11 @@ def memory_estimate(tile, width, height, counts, crop_pixels=None, debayer="rcd"
     buffer = busiest * (4 if feather else 3) * area * 4  # feathering: one weight per light and pixel more
     if not busiest:
         return {"buffer_bytes": 0, "scratch_bytes": 0, "required_bytes": RESERVE}
-    # RCD uses batches capped at two million source pixels, except a single crop
-    # may exceed that. Default padding/scratch bounds are calibrated against the
-    # RTX 3060 trials; crop_pixels can supply a measured padded batch bound.
+    # RCD batches: gpucoadd.RCD_BATCH_PIXELS source pixels (8 million; a single crop may exceed
+    # it). The staged CUDA RCD needs about 50 bytes per batch pixel; the 480 bytes per pixel
+    # below date from the torch RCD and the earlier 2 million cap, and are kept as a margin
+    # (measured: 8 million pixels added 0.29 GiB to the peak). crop_pixels can supply a
+    # measured padded batch bound.
     pixels = crop_pixels if crop_pixels is not None else min(busiest * area * 4, max(4_000_000, area * 4))
     # Live RCD intermediates plus allocator slack for differently padded batches.
     # The original 256 B/pixel estimate understated measured scratch allocation.
