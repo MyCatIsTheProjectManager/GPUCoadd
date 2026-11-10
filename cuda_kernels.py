@@ -108,7 +108,9 @@ class Module:
 
     def launch(self, name, grid, block, args):
         """args: torch tensors (passed as device pointers; None = null pointer), ints (int32) or
-        floats (float32). Runs on torch's current CUDA stream."""
+        floats (float32). grid: a block count, or (x, y) block counts for a two-dimensional
+        grid (e.g. one row of blocks per light). Runs on torch's current CUDA stream."""
+        gx, gy = (grid, 1) if isinstance(grid, int) else (int(grid[0]), int(grid[1]))
         fn = self._fns.get(name)
         if fn is None:
             fn = ctypes.c_void_p()
@@ -128,4 +130,4 @@ class Module:
                 holders.append(ctypes.c_int(int(a)))
         params = (ctypes.c_void_p * len(holders))(*[ctypes.addressof(h) for h in holders])
         stream = ctypes.c_void_p(torch.cuda.current_stream().cuda_stream)
-        _check_cu(_cuda.cuLaunchKernel(fn, grid, 1, 1, block, 1, 1, 0, stream, params, None), f"launch {name}")
+        _check_cu(_cuda.cuLaunchKernel(fn, gx, gy, 1, block, 1, 1, 0, stream, params, None), f"launch {name}")

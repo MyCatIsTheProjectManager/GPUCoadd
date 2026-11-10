@@ -10,12 +10,13 @@ import torch
 from cuda_kernels import Module
 
 SOURCE = r"""
+// grid: (pixel blocks, B): one row of blocks per crop, 32-bit pixel arithmetic
 extern "C" __global__ void calibrate_pad(const long long* desc, float* out, int B, int H, int W) {
-    long long p = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    long long plane = (long long)H * W;
-    if (p >= (long long)B * plane) return;
-    int q = p / plane;
-    int y = (p % plane) / W, x = p % W;
+    int q = blockIdx.y;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= H * W) return;
+    long long p = (long long)q * H * W + i;
+    int y = i / W, x = i - y * W;
     const long long* d = desc + q * 11;
     const short* raw = (const short*)d[0];
     const float* flat = (const float*)d[1];
@@ -77,4 +78,4 @@ def calibrate_pad(raws, flats, pedestals, boxes, out):
         desc[q] = [raw.data_ptr(), flat.data_ptr(), *raw.stride(), *flat.stride(), a, b, c, d, bits]
     if B:
         metadata = torch.from_numpy(desc).to(out.device)
-        module().launch("calibrate_pad", (B * H * W + 255) // 256, 256, [metadata, out, B, H, W])
+        module().launch("calibrate_pad", ((H * W + 255) // 256, B), 256, [metadata, out, B, H, W])

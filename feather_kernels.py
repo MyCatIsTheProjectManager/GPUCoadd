@@ -20,11 +20,12 @@ SOURCE = r"""
 extern "C" __global__ void feather_weights(const double* mats, const double* wh, int B, double edge, double x0,
                                            double y0, int R, int C, double radius, float floor_w,
                                            const long long* slot, float* out) {
-    long long idx = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+    // grid: (pixel blocks, B), one row of blocks per light
+    int b = blockIdx.y;
     long long per = (long long)R * C;
-    if (idx >= per * B) return;
-    int b = (int)(idx / per);
-    int p = (int)(idx % per), yy = p / C, xx = p % C;
+    int p = blockIdx.x * blockDim.x + threadIdx.x;
+    if (p >= per) return;
+    int yy = p / C, xx = p - yy * C;
     const double* M = mats + 9 * b;
     double gx = x0 + xx, gy = y0 + yy;
     double den = M[6] * gx + M[7] * gy + M[8];
@@ -76,7 +77,8 @@ def feather_cuda(torch, out, slots, mats, sizes, edge, x0, y0, radius):
         t(slots, np.int64),
         out,
     ]  # Python float: packed as float32
-    module().launch("feather_weights", (B * rows * cols + 255) // 256, 256, args)
+    if B:
+        module().launch("feather_weights", ((rows * cols + 255) // 256, B), 256, args)
 
 
 def distance(xp, gx, gy, m, w, h, edge):

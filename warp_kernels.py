@@ -34,26 +34,31 @@ __device__ __forceinline__ float tap(const float* p, int x, int y, int W, int H)
 // size; x0, y0: the tile's position in the matrices' output coordinates; sc, of (B, 3); gr (B, 3, 2)
 // per-light plane in ADU per output pixel or null; slot (B) row of each light in the stack
 // (n, 3, R, C); bicubic: 1 bicubic, 0 bilinear
+// grid: (pixel blocks, B), one row of blocks per light; lim (B, 4): each light's valid crop
+// range lox, hix, loy, hiy, computed on the host with the same IEEE operations (light_limits)
 extern "C" __global__ void warp(const float* rgb, int B, int Hm, int Wm, const double* mats, const double* box,
-                                const double* wh, double edge, double x0, double y0, int R, int C,
+                                const double* lim, double x0, double y0, int R, int C,
                                 const float* sc, const float* of, const float* gr, const long long* slot, float* stack,
                                 int bicubic) {
-    long long idx = (long long)blockIdx.x * blockDim.x + threadIdx.x;
-    long long per = (long long)R * C;
-    if (idx >= per * B) return;
-    int b = (int)(idx / per);
-    int p = (int)(idx % per), yy = p / C, xx = p % C;
+    int b = blockIdx.y;
+    int per = R * C;
+    int p = blockIdx.x * blockDim.x + threadIdx.x;
+    if (p >= per) return;
+    int yy = p / C, xx = p - yy * C;
     const double* M = mats + 9 * b;
     double gx = x0 + xx, gy = y0 + yy;
-    double a = box[4 * b], bb = box[4 * b + 1], c = box[4 * b + 2], d = box[4 * b + 3];
+    double a = box[4 * b], c = box[4 * b + 2];
     // separate rounding per operation, as warp_torch
-    double den = __dadd_rn(__dadd_rn(__dmul_rn(M[6], gx), __dmul_rn(M[7], gy)), M[8]);
-    double sx = __dadd_rn(__ddiv_rn(__dadd_rn(__dadd_rn(__dmul_rn(M[0], gx), __dmul_rn(M[1], gy)), M[2]), den), -c);
-    double sy = __dadd_rn(__ddiv_rn(__dadd_rn(__dadd_rn(__dmul_rn(M[3], gx), __dmul_rn(M[4], gy)), M[5]), den), -a);
-    double W = wh[2 * b], H = wh[2 * b + 1];
-    double lox = fmax(__dadd_rn(edge, -c), 0.0), hix = fmin(__dadd_rn(__dadd_rn(d, -c), -1.0), __dadd_rn(__dadd_rn(__dadd_rn(W, -1.0), -edge), -c));
-    double loy = fmax(__dadd_rn(edge, -a), 0.0), hiy = fmin(__dadd_rn(__dadd_rn(bb, -a), -1.0), __dadd_rn(__dadd_rn(__dadd_rn(H, -1.0), -edge), -a));
-    bool valid = sx >= lox && sx <= hix && sy >= loy && sy <= hiy;
+    double nx = __dadd_rn(__dadd_rn(__dmul_rn(M[0], gx), __dmul_rn(M[1], gy)), M[2]);
+    double ny = __dadd_rn(__dadd_rn(__dmul_rn(M[3], gx), __dmul_rn(M[4], gy)), M[5]);
+    if (!(M[6] == 0.0 && M[7] == 0.0 && M[8] == 1.0)) {  // affine: the denominator is exactly 1
+        double den = __dadd_rn(__dadd_rn(__dmul_rn(M[6], gx), __dmul_rn(M[7], gy)), M[8]);
+        nx = __ddiv_rn(nx, den);
+        ny = __ddiv_rn(ny, den);
+    }
+    double sx = __dadd_rn(nx, -c), sy = __dadd_rn(ny, -a);
+    const double* L = lim + 4 * b;
+    bool valid = sx >= L[0] && sx <= L[1] && sy >= L[2] && sy <= L[3];
     long long o = ((long long)slot[b] * 3) * per + p;
     if (!valid) {
         float nan = __int_as_float(0x7fc00000);
@@ -104,6 +109,8 @@ def warp(rgb, mats, boxes, sizes, edge, x0, y0, rows, cols, sc, of, slots, stack
     offset; interp: "bicubic" or "bilinear"."""
     dev = rgb.device
     B, _, Hm, Wm = rgb.shape
+    if rows * cols >= 2**31:
+        raise ValueError("Warp tile too large")
     t = lambda a, dt: torch.from_numpy(np.ascontiguousarray(a, dtype=dt)).to(dev)
     args = [
         rgb.contiguous(),
@@ -112,8 +119,7 @@ def warp(rgb, mats, boxes, sizes, edge, x0, y0, rows, cols, sc, of, slots, stack
         Wm,
         t(np.reshape(mats, (B, 9)), np.float64),
         t(boxes, np.float64),
-        t(sizes, np.float64),
-        Double(edge),
+        t(light_limits(boxes, sizes, edge), np.float64),
         Double(x0),
         Double(y0),
         rows,
@@ -125,8 +131,24 @@ def warp(rgb, mats, boxes, sizes, edge, x0, y0, rows, cols, sc, of, slots, stack
         stack,
         1 if interp == "bicubic" else 0,
     ]
-    total = B * rows * cols
-    module(fmad).launch("warp", (total + 255) // 256, 256, args)
+    if B:
+        module(fmad).launch("warp", ((rows * cols + 255) // 256, B), 256, args)
+
+
+def light_limits(boxes, sizes, edge):
+    """(B, 4) float64: each light's valid source range in its crop, lox, hix, loy, hiy, as warp_torch
+    computes it (float64, one rounding per operation, same order). The kernel compares with these
+    instead of computing them in every thread."""
+    box = np.asarray(boxes, np.float64).reshape(-1, 4)
+    wh = np.asarray(sizes, np.float64).reshape(-1, 2)
+    a, b, c, d = box.T
+    W, H = wh.T
+    edge = np.float64(edge)
+    lox = np.maximum(edge - c, 0.0)
+    hix = np.minimum((d - c) - 1.0, ((W - 1.0) - edge) - c)
+    loy = np.maximum(edge - a, 0.0)
+    hiy = np.minimum((b - a) - 1.0, ((H - 1.0) - edge) - a)
+    return np.stack([lox, hix, loy, hiy], 1)
 
 
 def _cubic(x0, x1, x2, x3, t):
