@@ -2068,7 +2068,12 @@ def frames_for_region(analysis, n, w, h, select, region, edge, framing="union", 
 def footprint_coverage(mats, frames, w, h, width, height, progress=None, edge=0, destination=None):
     """Rasterized geometric coverage; boundary pixels may differ from sampled RGB coverage.
     Each footprint is rasterized only within its bounding box (plus a guard pixel), shifted by
-    whole pixels, so the counts are identical to filling a full-canvas mask per frame."""
+    whole pixels, so the counts are identical to filling a full-canvas mask per frame.
+    A convex fill covers one run of pixels per row, so each footprint only marks where its runs
+    start (+1) and end (-1); one running sum along each row at the end gives the counts. The
+    marks wrap around in uint32, and the sums are exact because every count is small and
+    non-negative. Adding each full mask instead took 17 ms per S50 Pro light (NGC 2175: 5.4 s
+    for 322 lights)."""
     # An optional destination is freshly zeroed by its workspace (including new mapped files).
     coverage = np.zeros((height, width), np.uint32) if destination is None else destination
     if coverage.shape != (height, width) or coverage.dtype != np.uint32:
@@ -2078,8 +2083,10 @@ def footprint_coverage(mats, frames, w, h, width, height, progress=None, edge=0,
         polygon = np.rint(frame_footprint(mats[i], *frame_size(w, h, i), edge) * 256).astype(
             np.int64
         )  # 1/256-pixel fixed point
-        x0, y0 = np.maximum((polygon.min(0) >> 8) - 1, 0)
-        x1, y1 = np.minimum((polygon.max(0) >> 8) + 2, (width, height))
+        lo, hi = (polygon.min(0) >> 8) - 1, (polygon.max(0) >> 8) + 2
+        x0, y0 = np.maximum(lo, 0)
+        x1, y1 = np.minimum(hi, (width, height))
+        clipped = bool((lo < 0).any() or hi[0] > width or hi[1] > height)
         if x1 > x0 and y1 > y0:
             if scratch.size < (y1 - y0) * (x1 - x0):
                 scratch = np.empty((y1 - y0) * (x1 - x0), np.uint8)
@@ -2088,9 +2095,30 @@ def footprint_coverage(mats, frames, w, h, width, height, progress=None, edge=0,
             cv2.fillConvexPoly(
                 mask, (polygon - np.array([x0, y0]) * 256).astype(np.int32), 1, lineType=cv2.LINE_8, shift=8
             )
-            coverage[y0:y1, x0:x1] += mask
+            count = cv2.reduce(mask, 1, cv2.REDUCE_SUM, dtype=cv2.CV_32S).ravel()
+            rows = np.flatnonzero(count)
+            first = mask.argmax(1)[rows]
+            if clipped:
+                # a footprint clipped at the canvas edge can be filled with a gap in a row:
+                # find such rows and mark each of their runs
+                last = mask.shape[1] - 1 - cv2.flip(mask, 1).argmax(1)[rows]
+                gap = last - first + 1 != count[rows]
+            else:  # a convex fill inside the canvas: one run per row
+                last = first + count[rows] - 1
+                gap = np.zeros(len(rows), bool)
+            for r in rows[gap]:
+                steps = np.diff(mask[r].astype(np.int64), prepend=0, append=0)  # +1 at run starts, -1 after ends
+                coverage[y0 + r, x0:x1] += steps[:-1].astype(np.uint32)
+                if steps[-1] and x1 < width:
+                    coverage[y0 + r, x1] -= np.uint32(1)
+            rows, first, last = rows[~gap] + y0, first[~gap] + x0, last[~gap] + x0
+            coverage[rows, first] += np.uint32(1)
+            inside = last + 1 < width
+            coverage[rows[inside], last[inside] + 1] -= np.uint32(1)
         if progress and (j % 8 == 0 or j == len(frames)):
             progress("frame count", j, len(frames))
+    for r in range(0, height, 256):  # running sums along each row, in blocks (the destination may be on disk)
+        coverage[r : r + 256] = np.cumsum(coverage[r : r + 256], axis=1, dtype=np.uint32)
     return coverage
 
 
