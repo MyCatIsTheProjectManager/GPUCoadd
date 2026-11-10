@@ -1546,11 +1546,67 @@ def fit_star_pairs(src, ref, transform, mapped, guess_scale, lo, hi, radius=2.0)
     phot = good & (src[:, 5] < SAT) & (ref[k, 5] < SAT) & (src[:, 2:5] > 0).all(1) & (ref[k, 2:5] > 0).all(1)
     ratio = np.median(src[phot, 2:5] / ref[k[phot], 2:5], 0) if phot.sum() >= 10 else np.full(3, np.nan)
     minv = np.linalg.inv(forward)
-    if transform == "homography" and good.sum() >= 12:
-        hm, _ = cv2.findHomography(src[good, :2], ref[k[good], :2], cv2.RANSAC, 1.0)
-        if hm is not None:
+    details = {"transform": "similarity", "matched_stars": int(good.sum()), "rms_px": rms, "scale": scale}
+    if transform == "homography":
+        hm, found = validated_homography(src[:, :2], src[good, :2], ref[k[good], :2], forward)
+        if hm is None:
+            details["homography_rejected"] = found
+        else:
             minv = np.linalg.inv(hm)
-    return minv, ratio, {"matched_stars": int(good.sum()), "rms_px": rms, "scale": scale}
+            details.update(found)
+    return minv, ratio, details
+
+
+HOMOGRAPHY_SPAN = 0.6  # matched stars span this share of the detected star field on each axis
+HOMOGRAPHY_DEVIATION = 0.02  # largest departure from the similarity at the field's corners, of its diagonal
+
+
+def validated_homography(stars, src, dst, forward):
+    """A homography (src -> dst) refining a validated similarity `forward`, or (None, reason).
+    It is accepted only where it interpolates: at least 12 RANSAC inliers with RMS <= 1 px,
+    spanning HOMOGRAPHY_SPAN of the detected star field (`stars`, all source stars, standing in
+    for the sensor) on each axis, a positive projective denominator over that field, and at its
+    corners within HOMOGRAPHY_DEVIATION of the field diagonal from the similarity. Stars matched
+    in one region (a mosaic overlap, clouds) otherwise give a perspective that is unconstrained
+    elsewhere and was accepted with corner errors of hundreds of pixels. Returns (matrix,
+    diagnostics for it)."""
+    if len(src) < 12:
+        return None, "fewer than 12 matched stars"
+    hm, mask = cv2.findHomography(src, dst, cv2.RANSAC, 1.0)
+    if hm is None or mask is None or not np.isfinite(hm).all() or abs(np.linalg.det(hm)) < 1e-12:
+        return None, "no homography fit"
+    inl = mask.ravel().astype(bool)
+    if inl.sum() < 12:
+        return None, "fewer than 12 homography inliers"
+    hn = hm / hm[2, 2] if hm[2, 2] != 0 else hm  # checks only: the fit itself is returned unchanged
+    lo, hi = stars.min(0), stars.max(0)
+    extent = hi - lo
+    if (extent <= 0).any() or (np.ptp(src[inl], axis=0) < HOMOGRAPHY_SPAN * extent).any():
+        return None, "matched stars cover too little of the field"
+    corners = np.array([[lo[0], lo[1]], [hi[0], lo[1]], [hi[0], hi[1]], [lo[0], hi[1]]])
+
+    def apply(m, pts):
+        p = m @ np.c_[pts, np.ones(len(pts))].T
+        return p[:2] / p[2], p[2]
+
+    mapped, w = apply(hn, np.r_[corners, src[inl]])
+    if not (np.isfinite(mapped).all() and (w > 0).all()):
+        return None, "perspective folds within the field"
+    rms = float(np.sqrt(np.mean(np.sum((mapped[:, 4:].T - dst[inl]) ** 2, 1))))
+    if rms > 1.0:
+        return None, "homography residuals above 1 px"
+    deviation = float(np.max(np.hypot(*(mapped[:, :4] - apply(forward, corners)[0]))))
+    if deviation > HOMOGRAPHY_DEVIATION * float(np.hypot(*extent)):
+        return None, f"departs {deviation:.0f} px from the similarity at the field corners"
+    centre = (lo + hi) / 2
+    J = (apply(hn, np.array([centre + [1, 0], centre + [0, 1]]))[0].T - apply(hn, centre[None])[0].T).T
+    return hm, {
+        "transform": "homography",
+        "matched_stars": int(inl.sum()),
+        "rms_px": rms,
+        "scale": float(np.sqrt(abs(np.linalg.det(J)))),
+        "homography_departure_px": deviation,
+    }
 
 
 def guided_match(job):
@@ -1635,6 +1691,9 @@ def match_via_candidates(job):
             if result is not None:
                 return anchor, result
     return None
+
+
+NEIGHBOUR_ROUNDS = 6  # rounds of neighbour alignment; each tries up to two aligned lights per pending light
 
 
 def register(
@@ -1770,7 +1829,8 @@ def register(
         through_neighbours = 0
         if progress and left:
             progress("neighbour alignment", 0, left)
-        for round_index in range(6):
+        rounds = 0
+        for round_index in range(NEIGHBOUR_ROUNDS):
             known = [i for i, o in enumerate(out) if o is not None]
             pending = [i for i, o in enumerate(out) if o is None]
             jobs, indices = [], []
@@ -1790,6 +1850,7 @@ def register(
                 jobs.append((stars[i], [(j, stars[j], ps[i] / ps[j]) for j in candidates], transform))
             if not jobs:
                 break
+            rounds += 1
             for i, result in zip(indices, ex.map(match_via_candidates, jobs)):
                 if result is not None:
                     anchor, local = result
@@ -1829,10 +1890,18 @@ def register(
                     **result[2],
                 }
         if diagnostics is not None:
-            for d in details:
+            known = [j for j, o in enumerate(out) if o is not None]
+            for i, d in enumerate(details):
                 if d["method"] == "failed" and not d.get("group_link_failed"):
-                    d["reason"] = "No validated star link to the reference or tested overlapping neighbours"
+                    untried = sum(j not in attempted[i] for j in known)
+                    d["reason"] = (
+                        f"Neighbour alignment stopped after {NEIGHBOUR_ROUNDS} rounds; "
+                        f"{untried} aligned lights not tried"
+                        if untried
+                        else "No validated star link to the reference or tested overlapping neighbours"
+                    )
             diagnostics.update(
+                neighbour_rounds=rounds,
                 direct=direct,
                 recovered=sum(o is not None for o in out) - direct,
                 failed=sum(o is None for o in out),
@@ -2695,8 +2764,10 @@ def stack(
 
     rej_noise = None
     if rejection == "noise" and not coverage_only:
-        # each light's pixel noise (green, raw) in normalized units per channel
-        rej_noise = np.stack([stats[i][2] * coefs[i][0] for i in active]).astype(np.float32)
+        # each light's own pixel noise per channel, in normalized units. Green's noise scaled to
+        # every channel left 1.4% more red noise than sigma clipping on SH2-142 with S50 lights
+        # added (per channel: 0.5%); single-sensor sets barely change.
+        rej_noise = np.stack([stats[i][3] * coefs[i][0] for i in active]).astype(np.float32)
         bad = np.flatnonzero(~(np.isfinite(rej_noise).all(axis=1) & (rej_noise > 0).all(axis=1)))
         if len(bad):
             i = active[int(bad[0])]

@@ -1204,9 +1204,10 @@ def _execute(request, reporter, folder, session, workspace):
         # Lights of different instruments differ in noise and colour response: brightness must
         # come from their overlaps (spread matching would scale whole groups by their noise) and
         # weights from their noise (equal weights: 20-65% more noise than the Pro alone, SH2-142).
-        # Noise-aware rejection estimates each light's noise per channel from green, and the two
-        # sensors' red/green noise ratios differ: it cost 2% in red on SH2-142, where sigma
-        # clipping gave the expected gain in all channels. Sigma or winsorized stay the user's choice.
+        # Noise-aware rejection left more noise than sigma clipping on SH2-142 with S50 lights
+        # added (red +0.5%, blue +0.2% with each channel's own noise; +1.4% and +0.6% when it was
+        # scaled from green), where sigma clipping gave the expected gain in all channels. Sigma
+        # or winsorized stay the user's choice.
         want = {
             "norm": "overlap",
             "weight": "noise",
@@ -1567,6 +1568,7 @@ def _execute(request, reporter, folder, session, workspace):
                         "matched_stars",
                         "rms_px",
                         "reason",
+                        "transform",
                     ],
                 )
                 label_of = {i: g["label"] for g in grouping["groups"] for i in g["indices"]}
@@ -1591,6 +1593,8 @@ def _execute(request, reporter, folder, session, workspace):
                             "matched_stars": d.get("matched_stars", ""),
                             "rms_px": d.get("rms_px", ""),
                             "reason": d.get("reason", ""),
+                            "transform": d.get("transform", "")
+                            + (f" (homography rejected: {d['homography_rejected']})" if "homography_rejected" in d else ""),
                         }
                     )
 

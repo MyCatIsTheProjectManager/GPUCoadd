@@ -109,6 +109,121 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(diagnostics["failed"], 1)
         self.assertEqual(diagnostics["frames"][2]["anchor"], 1)
 
+    def linked(self, n, edges, ref=0, rounds=None):
+        """register() over lights that validate only along `edges` (pairs of light indices);
+        returns (aligned flags, diagnostics)."""
+        import gpucoadd
+
+        stars = [np.full((12, 6), i, float) for i in range(n)]
+        edges = {frozenset(e) for e in edges}
+
+        def pair(job):
+            source, target = int(job[0][0, 0]), int(job[1][0, 0])
+            if frozenset((source, target)) not in edges:
+                return None
+            m = np.eye(3)
+            m[0, 2] = -(source - target) * 600
+            return m, np.ones(3), {"matched_stars": 12, "rms_px": 0.1, "scale": 1.0}
+
+        diagnostics = {}
+        with (
+            patch("gpucoadd.ProcessPoolExecutor", ThreadPoolExecutor),
+            patch("gpucoadd.match_to_ref", side_effect=pair),
+            patch.object(gpucoadd, "NEIGHBOUR_ROUNDS", rounds or gpucoadd.NEIGHBOUR_ROUNDS),
+        ):
+            mats, _ = register(stars, ref, 2, "similarity", diagnostics=diagnostics)
+        return [m is not None for m in mats], diagnostics
+
+    def test_round_limit_long_chain(self):
+        """A chain grows one link per round: lights beyond six links fail with untried aligned
+        lights left, reported as stopped rather than as having no link."""
+        chain = [(i, i + 1) for i in range(9)]
+        aligned, diagnostics = self.linked(10, chain)
+        self.assertEqual(aligned, [True] * 8 + [False] * 2)
+        self.assertEqual(diagnostics["neighbour_rounds"], 6)
+        for frame in diagnostics["frames"][8:]:
+            self.assertIn("stopped after 6 rounds", frame["reason"])
+        aligned, diagnostics = self.linked(10, chain, rounds=20)
+        self.assertTrue(all(aligned))
+        self.assertEqual(diagnostics["neighbour_rounds"], 8)
+
+    def test_round_limit_late_candidate(self):
+        """Light 1 overlaps only light 15, which aligns directly but ranks 14th among its
+        candidates: six rounds of two tries never reach it."""
+        edges = [(0, i) for i in range(2, 16)] + [(1, 15)]
+        aligned, diagnostics = self.linked(16, edges)
+        self.assertFalse(aligned[1])
+        self.assertIn("2 aligned lights not tried", diagnostics["frames"][1]["reason"])
+        aligned, _ = self.linked(16, edges, rounds=20)
+        self.assertTrue(all(aligned))
+
+    def test_no_link_after_every_candidate(self):
+        aligned, diagnostics = self.linked(5, [(0, 1), (1, 2), (2, 3)])
+        self.assertEqual(aligned, [True] * 4 + [False])
+        self.assertIn("No validated star link", diagnostics["frames"][4]["reason"])
+
+    def homography_case(self, box, seed):
+        """A pure 3 px shift; matched stars inside a box of the given size on a 1080 x 1920
+        sensor whose other 60 detected stars have no partner."""
+        from gpucoadd import fit_star_pairs
+
+        rng = np.random.default_rng(seed)
+        k = 30
+        xy = rng.uniform(0, 1, (k, 2)) * [min(box, 1080), min(box * 1920 / 1080, 1920)]
+        ref = np.zeros((k, 6))
+        ref[:, :2], ref[:, 2:5], ref[:, 5] = xy, 1000, 1
+        src = np.zeros((k + 60, 6))
+        src[:, 2:5], src[:, 5] = 1000, 1
+        src[:k, :2] = xy + rng.normal(0, 0.35, (k, 2)) + 3.0
+        src[k:, :2] = rng.uniform(0, [1080, 1920], (60, 2))
+        mapped = src[:, :2] - 3.0
+        mapped[k:] += 500
+        return fit_star_pairs(src, ref, "homography", mapped, 1.0, 0.98, 1.02)
+
+    def test_homography_needs_stars_across_the_field(self):
+        """Stars matched in one region: the homography is unconstrained elsewhere (corner errors
+        of hundreds of px were accepted), so the validated similarity is kept, with the reason."""
+        from gpucoadd import frame_footprint
+
+        corners = np.array([[0, 0], [1079, 0], [1079, 1919], [0, 1919]], float) - 3.0
+        kept = 0
+        for seed in range(20):
+            minv, _, details = self.homography_case(150, seed)
+            self.assertEqual(details["transform"], "similarity")
+            self.assertIn("too little of the field", details["homography_rejected"])
+            self.assertLess(np.abs(frame_footprint(minv, 1080, 1920) - corners).max(), 20)
+            minv, _, details = self.homography_case(1080, seed)  # stars across the sensor
+            self.assertLess(np.abs(frame_footprint(minv, 1080, 1920) - corners).max(), 5)
+            if details["transform"] == "homography":
+                kept += 1
+                self.assertLessEqual(details["rms_px"], 1.0)
+                self.assertLess(details["homography_departure_px"], 5)
+        self.assertGreaterEqual(kept, 17)  # RANSAC inliers may occasionally span too little
+
+    def test_homography_departure_and_fold_are_rejected(self):
+        from gpucoadd import validated_homography
+
+        rng = np.random.default_rng(8)
+        stars = rng.uniform(0, [1080, 1920], (80, 2))
+        forward = np.eye(3)
+
+        def project(h, p):
+            q = h @ np.c_[p, np.ones(len(p))].T
+            return (q[:2] / q[2]).T
+
+        strong = np.array([[1, 0, 0], [0, 1, 0], [4e-5, 0, 1.0]])  # ~ 45 px at the far corner
+        hm, why = validated_homography(stars, stars, project(strong, stars), forward)
+        self.assertIsNone(hm)
+        self.assertIn("departs", why)
+        mild = np.array([[1, 0, 0], [0, 1, 0], [2e-6, 0, 1.0]])
+        hm, found = validated_homography(stars, stars, project(mild, stars), forward)
+        self.assertIsNotNone(hm)
+        self.assertEqual(found["transform"], "homography")
+        fold = np.array([[1, 0, 0], [0, 1, 0], [-1.2e-3, 0, 1.0]])  # denominator 0 at x = 833
+        inside = stars[stars[:, 0] < 700]
+        hm, why = validated_homography(stars, inside, project(fold, inside), forward)
+        self.assertIsNone(hm)
+
     def test_supplied_pool_is_used_and_shut_down(self):
         """register(pool=...) matches through the caller's pool (started before the lights
         load) instead of starting its own, and shuts it down."""

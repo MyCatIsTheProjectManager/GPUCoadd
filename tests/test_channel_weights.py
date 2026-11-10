@@ -202,5 +202,40 @@ class ChannelWeightStackTests(unittest.TestCase):
         self.assertEqual(noise_of(img[..., 1]), noise_of(img_g[..., 1]))
 
 
+class ChannelRejectionNoiseTests(unittest.TestCase):
+    def test_noise_rejection_uses_each_channels_noise(self):
+        """Light 2 is noisy in red only: noise-aware rejection judges each channel's samples
+        against that channel's own noise (stats[3]), not green's noise scaled to the channel."""
+        import torch
+
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA unavailable")
+        noise = [(2.0, 1.0, 2.0)] * 6
+        noise[2] = (8.0, 1.0, 2.0)
+        raws, mats = lights(seed=6, noise=noise)
+        n = len(raws)
+        be = GPUBackend(iter(raws), 100, n)
+        kw = dict(tile=128, reg_workers=1, framing="union", select=0, log=lambda _: None)
+        captured, seen = {}, []
+        with (
+            patch.object(be, "detect", return_value=(np.ones((20, 6)), 3.0)),
+            patch("gpucoadd.register", return_value=(mats, [np.ones(3)] * n)),
+        ):
+            stack(be, coverage_only=True, on_analysis=captured.update, reference_idx=0, **kw)
+        integrate = be.integrate
+
+        def capture(*args, **kwargs):
+            seen.append(np.asarray(kwargs["noise"]))
+            return integrate(*args, **kwargs)
+
+        with patch.object(be, "integrate", side_effect=capture):
+            stack(be, rejection="noise", analysis_cache=captured, **kw)
+        tile = next(t for t in seen if t.shape == (n, 3))  # a tile every light reaches, in index order
+        red_ratio = tile[:, 0] / tile[:, 1]
+        # scaled from green, every light's red/green ratio would be its coefficients' ratio (alike
+        # here); with each channel's own noise, light 2's is about four times the others'
+        self.assertGreater(red_ratio[2], 2.5 * np.delete(red_ratio, 2).max())
+
+
 if __name__ == "__main__":
     unittest.main()

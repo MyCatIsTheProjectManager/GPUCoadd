@@ -25,8 +25,10 @@ refer to the source repository; the installed copy contains only the program and
 1. Read the lights and subtract each light's camera offset.
 2. Detect stars and measure their brightness and width.
 3. Match stars to the reference light (triangle matching, astroalign) and fit a similarity or
-   homography transform. Lights that can't match the reference directly are chained through
-   already aligned neighbours; there is no global bundle adjustment.
+   homography transform. A homography is kept only where its matched stars cover most of the
+   field and it stays close to the similarity; otherwise the similarity is used. Lights that
+   can't match the reference directly are chained through already aligned neighbours; there is
+   no global bundle adjustment.
 4. Optionally drop blurry lights: FWHM above the median plus a chosen multiple of its spread.
 5. Compute brightness corrections (see Normalization).
 6. For each output tile: debayer and warp every light that reaches it, apply the corrections,
