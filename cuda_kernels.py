@@ -79,8 +79,44 @@ class Double:
         self.value = float(value)
 
 
+# A cache file: this header, the SHA-256 of the cubin, the cubin. The driver is given a cubin
+# without its length, so a damaged or truncated file must be caught before it reaches it.
+MAGIC = b"GPUCoadd cubin 1\n"
+
+
+def _read_cache(path):
+    """The cubin in a cache file, or None when the file is missing, empty, of the old headerless
+    format, or damaged (its bytes no longer match their SHA-256)."""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    head = len(MAGIC) + 32
+    if len(raw) <= head or not raw.startswith(MAGIC):
+        return None
+    data = raw[head:]
+    return data if hashlib.sha256(data).digest() == raw[len(MAGIC) : head] else None
+
+
+def _write_cache(path, data):
+    """Store a cubin; a cache that can't be written only means compiling again next time."""
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")
+    try:
+        CACHE.mkdir(parents=True, exist_ok=True)
+        tmp.write_bytes(MAGIC + hashlib.sha256(data).digest() + data)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 class Module:
-    """Compile (or load from the cache) CUDA C `source` and launch its extern "C" kernels."""
+    """Compile (or load from the cache) CUDA C `source` and launch its extern "C" kernels.
+    A cached cubin that is damaged, or that the driver refuses (e.g. after a driver change), is
+    compiled again and loaded from memory, and the cache file is replaced when it can be: before,
+    the stage fell back to torch and the same file was tried again on every run."""
 
     def __init__(self, source, fmad=False):
         _init()
@@ -90,21 +126,25 @@ class Module:
         _nvrtc.nvrtcVersion(ctypes.byref(ver[0]), ctypes.byref(ver[1]))
         key = hashlib.sha256(f"{source}|{arch}|{ver[0].value}.{ver[1].value}|fmad={fmad}".encode()).hexdigest()[:32]
         path = CACHE / f"{key}.cubin"
-        try:
-            data = path.read_bytes()
-        except OSError:
+        data = _read_cache(path)
+        cached = data is not None
+        if not cached:
             data = _compile(source, arch, fmad)
-            try:
-                CACHE.mkdir(parents=True, exist_ok=True)
-                tmp = path.with_suffix(f".{os.getpid()}.tmp")
-                tmp.write_bytes(data)
-                os.replace(tmp, path)
-            except OSError:
-                pass  # no cache: compiled again next time
+            _write_cache(path, data)
+        self._fns = {}
+        try:
+            self._load(data)
+        except RuntimeError:
+            if not cached:
+                raise
+            data = _compile(source, arch, fmad)  # intact on disk, refused by this driver
+            self._load(data)
+            _write_cache(path, data)
+
+    def _load(self, data):
         self._data = ctypes.create_string_buffer(data, len(data))
         self._mod = ctypes.c_void_p()
         _check_cu(_cuda.cuModuleLoadData(ctypes.byref(self._mod), self._data), "cuModuleLoadData")
-        self._fns = {}
 
     def launch(self, name, grid, block, args):
         """args: torch tensors (passed as device pointers; None = null pointer), ints (int32) or
