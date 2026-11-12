@@ -3,8 +3,16 @@
 sort_samples keeps each sample's frame index paired with it (ties by index). sort_values sorts
 values only: equal values may come out in any frame order, which leaves the sorted values
 unchanged, so it serves rejection that gathers nothing by frame. Generated networks use shuffle
-exchanges and register pairs, without a full sample array in shared memory.
+exchanges and register pairs. A block sorts a few neighbouring pixels: their samples pass through
+shared memory in whole rows, so global reads and writes use full memory sectors.
 """
+
+PAD = 4  # shared-memory row padding: staging and per-warp reads without bank conflicts
+
+
+def columns(capacity):
+    """Pixels per block (one warp each), within 48 KB of shared memory for values and indices."""
+    return 8 if capacity <= 512 else 4
 
 PRELUDE = r"""
 __device__ bool less(float a, int ai, float b, int bi) {
@@ -29,20 +37,24 @@ def _kernel(capacity, indices):
         return f"less(v{a},i{a},v{b},i{b})" if indices else f"vless(v{a},v{b})"
 
     name, order = ("sort_samples", "long long* order, ") if indices else ("sort_values", "")
+    cols, row = columns(capacity), capacity + PAD
+    staged = f"__shared__ float sv[{cols * row}];" + (f" __shared__ int si[{cols * row}];" if indices else "")
     lines = [
         f"""extern "C" __global__ void {name}(const float* x, float* y, {order}
                                        int n, int M, int stride, int pixelstride,
                                        int outframe, int outpixel) {{
-    int lane = threadIdx.x & 31;
-    int m = (blockIdx.x * blockDim.x + threadIdx.x) / 32;
-    if (m >= M) return;"""
+    {staged}
+    int lane = threadIdx.x & 31, warp = threadIdx.x / 32, m0 = blockIdx.x * {cols};
+    for (int t = threadIdx.x; t < n * {cols}; t += blockDim.x) {{
+        int f = t / {cols}, c = t % {cols};
+        sv[c * {row} + f] = m0 + c < M ? x[(long long)f * stride + (long long)(m0 + c) * pixelstride] : 0.f;
+    }}
+    __syncthreads();
+    const float* col = sv + warp * {row};"""
     ]
     for r in range(registers):
         index = f"int i{r} = lane + {32 * r}; " if indices else ""
-        at = f"i{r}" if indices else f"(lane + {32 * r})"
-        lines.append(
-            f"{index}float v{r} = {at} < n ? x[(long long){at}*stride+(long long)m*pixelstride] : __int_as_float(0x7fc00000);"
-        )
+        lines.append(f"{index}float v{r} = lane + {32 * r} < n ? col[lane + {32 * r}] : __int_as_float(0x7fc00000);")
     k = 2
     while k <= capacity:
         j = k // 2
@@ -75,11 +87,16 @@ def _kernel(capacity, indices):
                         lines.append(f"if ({cond}) {{{swap}}}")
             j //= 2
         k *= 2
+    lines.append("__syncthreads();")
     for r in range(registers):
-        store = f"y[at]=v{r};" + (f"order[at]=i{r};" if indices else "")
-        lines.append(
-            f"if (lane+{32 * r}<n) {{long long at=(long long)(lane+{32 * r})*outframe+(long long)m*outpixel;{store}}}"
-        )
+        at = f"warp * {row} + lane + {32 * r}"
+        lines.append(f"if (lane + {32 * r} < n) {{ sv[{at}] = v{r};" + (f" si[{at}] = i{r};" if indices else "") + " }")
+    store = f"y[at] = sv[c * {row} + f];" + (f" order[at] = si[c * {row} + f];" if indices else "")
+    lines.append(f"""__syncthreads();
+    for (int t = threadIdx.x; t < n * {cols}; t += blockDim.x) {{
+        int f = t / {cols}, c = t % {cols};
+        if (m0 + c < M) {{ long long at = (long long)f * outframe + (long long)(m0 + c) * outpixel; {store} }}
+    }}""")
     return "\n".join(lines) + "\n}"
 
 
@@ -135,9 +152,11 @@ def _launch(x, indices):
     if capacity not in MODULES:
         MODULES[capacity] = Module(source(capacity))
     values = torch.empty((n, m), device=x.device, dtype=torch.float32)
+    cols = columns(capacity)
+    grid, block = (m + cols - 1) // cols, 32 * cols
     if not indices:
-        MODULES[capacity].launch("sort_values", (m + 3) // 4, 128, [x, values, n, m, x.stride(0), 1, m, 1])
+        MODULES[capacity].launch("sort_values", grid, block, [x, values, n, m, x.stride(0), 1, m, 1])
         return values
     order = torch.empty((n, m), device=x.device, dtype=torch.int64)
-    MODULES[capacity].launch("sort_samples", (m + 3) // 4, 128, [x, values, order, n, m, x.stride(0), 1, m, 1])
+    MODULES[capacity].launch("sort_samples", grid, block, [x, values, order, n, m, x.stride(0), 1, m, 1])
     return values, order
