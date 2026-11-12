@@ -71,7 +71,7 @@ Original lights are never modified.
 
 ## Install
 
-Run `GPUCoadd-0.10.0-beta-windows.exe`, choose an install folder, and wait for the GPU test to pass.
+Run `GPUCoadd-0.11.0-beta-windows.exe`, choose an install folder, and wait for the GPU test to pass.
 Setup installs everything it needs, including Python, and adds **GPUCoadd** to the Start menu.
 
 - **On its own:** open **GPUCoadd** from the Start menu.
