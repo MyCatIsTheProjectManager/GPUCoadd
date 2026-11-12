@@ -527,12 +527,18 @@ $Work = {
             [void](Run (Join-Path $Dir ".venv\Scripts\python.exe") @((Join-Path $Dir "worker\selftest.py")))
             $S.OnLine = $null
             $e = $S.SelfTestEvent
-            if (-not $e -or $e.result -ne "ok") {
+            # "slow": every check passed, but a GPU kernel could not be built and its stage runs on a
+            # slower path. GPUCoadd works, so setup completes and says so.
+            if (-not $e -or ($e.result -ne "ok" -and $e.result -ne "slow")) {
                 $why = "The GPU self-test could not run: $($S.LastError)"
                 if ($e) { $why = "$($e.summary) $($e.next_step)" }
                 throw $why
             }
             $S.SelfTest = $e.summary
+            if ($e.result -eq "slow") {
+                $S.SelfTest = "$($e.summary) $($e.next_step)"
+                Log "  ! $($e.summary) $($e.error)"
+            }
             Log "  + $workDir\cubin_cache and kernel_cache: compiled GPU kernels, reused by GPUCoadd"
         }
         Finish 3 "passed"

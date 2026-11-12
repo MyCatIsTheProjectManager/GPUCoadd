@@ -11,7 +11,9 @@ refer to the source repository; the installed copy contains only the program and
 - NVIDIA GPU with compute capability 7.5 or newer. Setup advises a driver update below 570.
 - [worker/selftest.py](../worker/selftest.py) runs six synthetic Bayer lights through alignment and
   stacking. It passes when all six align, at least 20 stars are measurable, the median position
-  error is at most 0.3 px and the median star width is within 25% of the rendered width.
+  error is at most 0.3 px and the median star width is within 25% of the rendered width. When a
+  GPU kernel can't be built, its stage runs on a slower torch path: the self-test then reports
+  `slow` with the build error, and setup completes and shows it.
 - Window: [GPUCoadd/gpucoadd_qt](../GPUCoadd/gpucoadd_qt) (PyQt6), opened on its own by
   [start_gpucoadd.pyw](../start_gpucoadd.pyw) (the Start menu entry runs it with `pythonw.exe`) or
   from Siril's Scripts menu by [GPUCoadd/GPUCoadd.py](../GPUCoadd/GPUCoadd.py). Both start the same

@@ -27,7 +27,7 @@ import os
 from pathlib import Path
 import tempfile
 import time
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
 
@@ -186,17 +186,34 @@ def rcd_demosaic(torch, F, cfa, mr, mg, mb):
     return torch.stack([rb[0], g, rb[1]], dim=-3)
 
 
+class KernelChoice(str):
+    """Which implementation a GPU stage uses: the description shown in the log (the string itself)
+    with its facts. path: "kernel" (the stage's CUDA kernel), "torch", "jiterator" or "reference"
+    (RCD), or "not used"; reason: None for the kernel, "switch" when a GPUCOADD_* variable chose
+    another path, "build failed" when the kernel could not be built here; error: the build error."""
+
+    def __new__(cls, text, path, reason=None, error=None):
+        choice = super().__new__(cls, text)
+        choice.path, choice.reason, choice.error = path, reason, error
+        return choice
+
+
+def kernel_error(exc):
+    return f"{type(exc).__name__}: {exc}"
+
+
 def gpu_sort(max_frames):
     """Warp/register sort through 512 frames; torch above that or if compilation fails."""
     if os.environ.get("GPUCOADD_SORT") == "torch":
-        return None, "torch (GPUCOADD_SORT)"
+        return None, KernelChoice("torch (GPUCOADD_SORT)", "torch", "switch")
     try:
         import sort_kernels
 
         sort_kernels.prepare(max_frames)
-        return sort_kernels, "warp <=512 / torch >512"
+        return sort_kernels, KernelChoice("warp <=512 / torch >512", "kernel")
     except Exception as exc:
-        return None, f"torch (sort unavailable: {type(exc).__name__}: {exc})"
+        return None, KernelChoice(f"torch (sort unavailable: {kernel_error(exc)})", "torch", "build failed",
+                                  kernel_error(exc))
 
 
 def gpu_clip():
@@ -205,14 +222,15 @@ def gpu_clip():
     noise-aware identical but for samples within float rounding of a threshold) when they can be
     built here, else None (torch). GPUCOADD_CLIP=torch forces the torch path."""
     if os.environ.get("GPUCOADD_CLIP") == "torch":
-        return None, "torch (GPUCOADD_CLIP)"
+        return None, KernelChoice("torch (GPUCOADD_CLIP)", "torch", "switch")
     try:
         import integrate_kernels
 
         integrate_kernels.module()  # compiled once, then loaded from the disk cache
-        return integrate_kernels, "cuda kernels"
+        return integrate_kernels, KernelChoice("cuda kernels", "kernel")
     except Exception as exc:
-        return None, f"torch (kernels unavailable: {type(exc).__name__}: {exc})"
+        return None, KernelChoice(f"torch (kernels unavailable: {kernel_error(exc)})", "torch", "build failed",
+                                  kernel_error(exc))
 
 
 def gpu_warp():
@@ -220,27 +238,29 @@ def gpu_warp():
     and scatter in one kernel, the same arithmetic as warp_kernels.warp_torch, ~3x faster) when they
     can be built here, else None (warp_torch). GPUCOADD_WARP=torch forces the torch path."""
     if os.environ.get("GPUCOADD_WARP") == "torch":
-        return None, "torch (GPUCOADD_WARP)"
+        return None, KernelChoice("torch (GPUCOADD_WARP)", "torch", "switch")
     try:
         import warp_kernels
 
         warp_kernels.module()
-        return warp_kernels, "cuda kernel"
+        return warp_kernels, KernelChoice("cuda kernel", "kernel")
     except Exception as exc:
-        return None, f"torch (kernel unavailable: {type(exc).__name__}: {exc})"
+        return None, KernelChoice(f"torch (kernel unavailable: {kernel_error(exc)})", "torch", "build failed",
+                                  kernel_error(exc))
 
 
 def gpu_calibrate():
     """Fused tile calibration/padding, or the original torch path when unavailable."""
     if os.environ.get("GPUCOADD_CALIBRATE") == "torch":
-        return None, "torch (GPUCOADD_CALIBRATE)"
+        return None, KernelChoice("torch (GPUCOADD_CALIBRATE)", "torch", "switch")
     try:
         import calibrate_kernels
 
         calibrate_kernels.module()
-        return calibrate_kernels, "cuda kernel"
+        return calibrate_kernels, KernelChoice("cuda kernel", "kernel")
     except Exception as exc:
-        return None, f"torch (kernel unavailable: {type(exc).__name__}: {exc})"
+        return None, KernelChoice(f"torch (kernel unavailable: {kernel_error(exc)})", "torch", "build failed",
+                                  kernel_error(exc))
 
 
 def gpu_rcd():
@@ -250,23 +270,29 @@ def gpu_rcd():
     GPUCOADD_RCD=reference selects the original torch implementation.
     """
     if os.environ.get("GPUCOADD_RCD") == "reference":
-        return rcd_demosaic, "reference (GPUCOADD_RCD)"
-    staged_error = ""
+        return rcd_demosaic, KernelChoice("reference (GPUCOADD_RCD)", "reference", "switch")
+    staged_error, error = "", None
     if os.environ.get("GPUCOADD_RCD") != "jiterator":
         try:
             from rcd_kernels import module, rcd_demosaic_staged
 
             module()  # Compile/load before loading the lights; fallback is explicit in the log.
-            return rcd_demosaic_staged, "staged CUDA"
+            return rcd_demosaic_staged, KernelChoice("staged CUDA", "kernel")
         except Exception as exc:
-            staged_error = f" (staged CUDA unavailable: {type(exc).__name__}: {exc})"
+            error = kernel_error(exc)
+            staged_error = f" (staged CUDA unavailable: {error})"
+    reason = "switch" if error is None else "build failed"
     try:
         from rcd_fused import _kernels, rcd_demosaic_fused
 
         _kernels()  # compiled once ever (~20 s), later loaded from torch's disk cache (~0.1 s)
-        return rcd_demosaic_fused, "fused" + staged_error
+        return rcd_demosaic_fused, KernelChoice("fused" + staged_error, "jiterator", reason, error)
     except Exception as exc:  # no NVRTC, unsupported GPU, ...: the reference works everywhere
-        return rcd_demosaic, f"reference (fused kernels unavailable: {type(exc).__name__}: {exc})" + staged_error
+        fused = kernel_error(exc)
+        return rcd_demosaic, KernelChoice(
+            f"reference (fused kernels unavailable: {fused})" + staged_error, "reference", "build failed",
+            fused if error is None else f"{error}; fused: {fused}",
+        )
 
 
 class Timer:
@@ -838,13 +864,14 @@ class GPUBackend:
         self.debayer = debayer
         self.edge = sensor_edge(debayer, interp)
         self.dev = torch.device("cuda")
-        self.rcd, self.rcd_kind = gpu_rcd() if debayer == "rcd" else (rcd_demosaic, "not used")
+        self.rcd, self.rcd_kind = gpu_rcd() if debayer == "rcd" else (rcd_demosaic, KernelChoice("not used", "not used"))
         self.clip, self.clip_kind = gpu_clip()
         self.warp, self.warp_kind = gpu_warp()
         self.calibration, self.calibration_kind = gpu_calibrate()
         self.timer = Timer(None if os.environ.get("GPUCOADD_SYNC_TIMING") == "0" else torch.cuda.synchronize)
         self.n = n = n or 1
         self.sort, self.sort_kind = gpu_sort(n)
+        self.kernel_calls = Counter()  # (stage, path, why) -> uses in this job; see kernel_status
         self.loaded = list(range(n)) if indices is None else [int(i) for i in indices]
         if len(set(self.loaded)) != len(self.loaded) or not all(0 <= i < n for i in self.loaded):
             raise ValueError("Loaded light indices must be distinct and within the input list")
@@ -935,6 +962,46 @@ class GPUBackend:
         self.k_gauss = torch.from_numpy(g).to(self.dev)
         hmax, wmax = max(r.shape[0] for r in self.raw), max(r.shape[1] for r in self.raw)
         self.masks = torch.from_numpy(np.stack(bayer_masks(hmax, wmax))).to(self.dev)  # GRBG is periodic
+
+    def count_kernel(self, stage, path, why=None):
+        """One use of a stage's implementation in this job (kernel_status's runtime)."""
+        if not hasattr(self, "kernel_calls"):
+            self.kernel_calls = Counter()
+        self.kernel_calls[(stage, path, why)] += 1
+
+    def reset_kernel_calls(self):
+        """A new job on this backend: its uses are counted from zero (the choices stay)."""
+        self.kernel_calls = Counter()
+
+    def kernel_status(self):
+        """Per GPU stage: the implementation chosen when it was built (selected: kernel, torch,
+        jiterator, reference, not used or not built; reason: switch or build failed; error) and what
+        ran in this job (runtime: uses per path, with the reason for uses off the chosen path, e.g.
+        the torch sort above 512 lights). A kernel that built is not one that ran: runtime says."""
+        clip = getattr(self, "clip_kind", None)
+        chosen = {
+            "calibrate": getattr(self, "calibration_kind", None),
+            "rcd": getattr(self, "rcd_kind", None),
+            "warp": getattr(self, "warp_kind", None),
+            "coverage": clip,  # its kernel is one of the rejection kernels
+            "sort": getattr(self, "sort_kind", None),
+            "clip": clip,
+            "feather": getattr(self, "feather_kind", KernelChoice("built on first use", "not built")),
+        }
+        status = {}
+        for stage, choice in chosen.items():
+            runtime = {}
+            for (s, path, why), calls in sorted(getattr(self, "kernel_calls", {}).items(), key=str):
+                if s == stage:
+                    runtime[path if why is None else f"{path} ({why})"] = calls
+            status[stage] = {
+                "selected": getattr(choice, "path", None if choice is None else str(choice)),
+                "reason": getattr(choice, "reason", None),
+                "error": getattr(choice, "error", None),
+                "description": None if choice is None else str(choice),
+                "runtime": runtime,
+            }
+        return status
 
     def keep_only(self, keep):
         """Free the loaded lights not in `keep` (frame indices)."""
@@ -1182,9 +1249,13 @@ class GPUBackend:
         if getattr(self, "_feather_fn", None) is None:
             try:
                 feather_kernels.module()
-                self._feather_fn = feather_kernels.feather_cuda
-            except Exception:
+                self._feather_fn, self.feather_kind = feather_kernels.feather_cuda, KernelChoice("cuda kernel", "kernel")
+            except Exception as exc:
                 self._feather_fn = feather_kernels.feather_torch
+                self.feather_kind = KernelChoice(
+                    f"torch (kernel unavailable: {kernel_error(exc)})", "torch", "build failed", kernel_error(exc)
+                )
+        self.count_kernel("feather", self.feather_kind.path)
         self._feather_fn(
             self.torch,
             out,
@@ -1240,6 +1311,7 @@ class GPUBackend:
                     calibration_buffer = None  # release the old capacity before growing
                     calibration_buffer = torch.empty(needed, device=self.dev)
                 cal = calibration_buffer[:needed].view(len(js), hmax, wmax)
+                self.count_kernel("calibrate", "torch" if self.calibration is None else "kernel")
                 if self.calibration is not None:
                     slots = [frames[j] if self.slot is None else self.slot[frames[j]] for j in js]
                     if self.storage_mode == "gpu":
@@ -1272,6 +1344,8 @@ class GPUBackend:
                         ix = torch.minimum(ix, 2 * (d - c - 1) - ix)
                         cal[q] = crop[iy[:, None], ix[None, :]]
                         del crop, iy, ix
+            if self.debayer == "rcd":
+                self.count_kernel("rcd", self.rcd_kind.path)
             with T("debayer"):
                 ms = self.masks[:, :hmax, :wmax]
                 if self.debayer == "rcd":
@@ -1289,6 +1363,7 @@ class GPUBackend:
             # warp_torch is the same arithmetic when the kernel cannot be built
             import warp_kernels
 
+            self.count_kernel("warp", "torch" if self.warp is None else "kernel")
             with T("warp"):
                 (self.warp.warp if self.warp is not None else warp_kernels.warp_torch)(
                     rgb,
@@ -1349,6 +1424,10 @@ class GPUBackend:
             nz = torch.from_numpy(np.asarray(noise, np.float32)).to(self.dev)
         fw = None if feather is None else feather.reshape(n, plane)
         sorter = getattr(self, "sort", None)
+        if hasattr(self, "kernel_calls"):
+            self.count_kernel("sort", "torch" if sorter is None else "torch" if n > 512 else "kernel",
+                              None if sorter is None or n <= 512 else "more than 512 lights")
+            self.count_kernel("clip", "torch" if clip is None else "kernel")
         # Frame indices are needed only to gather weights, feather weights or per-sample noise in
         # sorted order; without them a values-only sort gives the same sorted values, faster.
         values_only = wt is None and fw is None and rejection != "noise" and hasattr(sorter, "sort_values")
@@ -2431,6 +2510,12 @@ def _render_stack_tile(
             backend.feather_tile(fw, here, mats, x0, y0, feather)
     with backend.timer("coverage"):
         clip = getattr(backend, "clip", None)
+        if backend.name == "gpu":
+            backend.count_kernel(
+                "coverage",
+                "kernel" if hasattr(clip, "tile_coverage") and st.is_contiguous() else "torch",
+                "tile not contiguous" if hasattr(clip, "tile_coverage") and not st.is_contiguous() else None,
+            )
         if backend.name == "gpu" and hasattr(clip, "tile_coverage") and st.is_contiguous():
             # one kernel instead of full-size isfinite/all temporaries; the same counts
             valid, contributed = clip.tile_coverage(st)

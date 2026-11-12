@@ -375,6 +375,32 @@ def build_request(operation, folders, excluded, output_dir, work, reference, set
     return request
 
 
+def finish_warnings(operation, warnings):
+    """(status line, panel text) for a completed job's warnings: requested outputs that were not
+    saved, and GPU stages that ran on a slower path because their kernel could not be built
+    (kind "performance"; the results are complete either way)."""
+    outputs = [w for w in warnings if w.get("kind") != "performance"]
+    slow = [w for w in warnings if w.get("kind") == "performance"]
+    parts = []
+    if outputs:
+        title = ("Stack saved, but requested outputs are missing or incomplete:"
+                 if operation == "stack" else "Completed with output warnings:")
+        parts.append("\n\n".join([title] + [w["message"] for w in outputs]))
+    if slow:
+        parts.append("\n\n".join(
+            ["Completed, but slower than it should be:"] + [w["message"] for w in slow]
+            + ["The results are complete. The run report (report.json, under \"kernels\") has each stage's "
+               "path and error; an NVIDIA driver update may fix the build."]
+        ))
+    if outputs:
+        status = ("Stack saved with warnings: check missing outputs below."
+                  if operation == "stack" else "Completed with warnings: see below.")
+    else:
+        status = ("Stack saved, but slower than it should be: see below."
+                  if operation == "stack" else "Completed, but slower than it should be: see below.")
+    return status, "\n\n".join(parts)
+
+
 def job_problem(operation, folders, results_folder, custom_output, python, reference_on, reference, analysis, region):
     """Why a job cannot start, or None (the checks in the order the window shows them)."""
     if not folders:

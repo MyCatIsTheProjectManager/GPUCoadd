@@ -1517,13 +1517,10 @@ class GPUCoaddDialog(QDialog):
                 self.progress_text.setText(f"Completed at {logic.stamp()} · report saved in {result.get('folder')}")
                 self.append(logic.run_summary_line(result))
                 if result.get("warnings"):
-                    title = ("Stack saved, but requested outputs are missing or incomplete:"
-                             if operation == "stack" else "Completed with output warnings:")
-                    message = "\n\n".join([title] + [w["message"] for w in result["warnings"]])
+                    status, message = logic.finish_warnings(operation, result["warnings"])
                     self.output_warning.setText(message)
                     self.output_warning.show()
-                    self.status.setText("Stack saved with warnings: check missing outputs below."
-                                        if operation == "stack" else "Completed with warnings: see below.")
+                    self.status.setText(status)
                     self.append(message)
             elif result.get("status") == "cancelled":
                 self.status.setText("Operation cancelled.")

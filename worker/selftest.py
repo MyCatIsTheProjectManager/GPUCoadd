@@ -101,12 +101,38 @@ def main():
             problems.append(f"stars are {width:.2f} px wide, rendered at {rendered:.2f} px (limit +25%)")
     if not np.isfinite(image).any():
         problems.append("the stack has no data")
+    # Every stage ran, but a kernel that could not be built leaves its stage on a slower path
+    # (the GPUCOADD_* switches are for testing and are not a fault). Feathering builds its kernel
+    # on first use, which this stack does not reach, so it is built here.
+    from gpucoadd import kernel_error
+    from worker.bridge import KERNEL_STAGES
+
+    kernels = be.kernel_status()
+    try:
+        import feather_kernels
+
+        feather_kernels.module()
+    except Exception as exc:
+        kernels["feather"] = {"reason": "build failed", "error": kernel_error(exc)}
+    slow = {
+        stage: kernels[stage]["error"]
+        for stage in KERNEL_STAGES
+        if (kernels.get(stage) or {}).get("reason") == "build failed"
+    }
     seconds = time.perf_counter() - started
     if problems:
         say(result="failed", summary="The GPU self-test found a problem: " + "; ".join(problems) + ".",
             next_step="Update the NVIDIA driver and run the self-test again. If it still fails, send the setup log.",
             seconds=round(seconds, 1))
         return 1
+    if slow:
+        names = ", ".join(KERNEL_STAGES[stage] for stage in slow)
+        say(result="slow", summary=f"{FRAMES} synthetic lights aligned and stacked correctly, but these GPU kernels "
+            f"could not be built, so their stages run on slower paths: {names}.",
+            next_step="GPUCoadd works. An NVIDIA driver update may fix the build; run the self-test again after it.",
+            error="; ".join(f"{stage}: {error}" for stage, error in slow.items()), gpu=hw.get("gpu"),
+            seconds=round(seconds, 1))
+        return 0
     say(result="ok", summary=f"{FRAMES} synthetic lights aligned and stacked; stars within "
         f"{float(np.median(errors)):.2f} px of their true positions, {float(np.median(widths)):.2f} px wide.",
         gpu=hw.get("gpu"), seconds=round(seconds, 1))

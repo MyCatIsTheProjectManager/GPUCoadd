@@ -773,6 +773,37 @@ def image_output_manifest(files):
     ]
 
 
+# GPU stages as kernel_warnings names them; coverage counting uses one of the rejection kernels
+KERNEL_STAGES = {
+    "calibrate": "tile calibration",
+    "rcd": "RCD debayering",
+    "warp": "warping",
+    "sort": "sorting for rejection",
+    "clip": "rejection and coverage counting",
+    "feather": "feathering",
+}
+
+
+def kernel_warnings(kernels):
+    """One performance warning per GPU stage whose kernel could not be built here and that ran in
+    this job (kernels: GPUBackend.kernel_status()). A path chosen with a GPUCOADD_* switch, or one
+    taken by design (the torch sort above 512 lights), is in the report but is not a warning. No
+    claim about the results: the slower paths are checked against the kernels by the tests."""
+    warnings = []
+    for stage, name in KERNEL_STAGES.items():
+        status = kernels.get(stage) or {}
+        ran = sum((status.get("runtime") or {}).values())
+        if status.get("reason") == "build failed" and ran:
+            warnings.append({
+                "output": None,
+                "kind": "performance",
+                "stage": stage,
+                "message": f"The GPU kernel for {name} could not be built; this stage ran on a slower path. "
+                f"{status.get('error') or ''}".strip(),
+            })
+    return warnings
+
+
 def output_warning(output, exc, what):
     """Why an optional output (activity log, frames CSV) was not saved. An OSError is the
     environment refusing it (permission, full drive, lock, disconnected folder); anything else
@@ -989,6 +1020,12 @@ class Reporter:
                 log.close()
             except OSError:
                 pass
+
+    def performance(self, warning):
+        """A GPU stage ran on a slower path because its kernel could not be built: a warning
+        about speed, never about the results or the run's outcome."""
+        self.warnings.append(warning)
+        self.emit("warning", **warning)
 
     def warn(self, output, exc, what):
         """An optional output was not saved: a warning, never a change of the run's outcome."""
@@ -1472,6 +1509,8 @@ def _execute(request, reporter, folder, session, workspace):
             session.remember(be, reuse_key)
     load_s = time.perf_counter() - load_start
     be.source_paths = {i: str(p) for i, p in enumerate(paths)}
+    if hasattr(be, "reset_kernel_calls"):
+        be.reset_kernel_calls()  # a kept backend serves several jobs: count this one's uses only
     import resource_guard
 
     resource_guard.set_handlers(relieve=getattr(be, "release_ram", None), warn=reporter.message)
@@ -1522,6 +1561,9 @@ def _execute(request, reporter, folder, session, workspace):
         registration_pool=getattr(reporter, "registration_pool", None),
     )
     peak_vram = be.torch.cuda.max_memory_reserved() / 2**30
+    kernels = be.kernel_status() if hasattr(be, "kernel_status") else {}
+    for warning in kernel_warnings(kernels):
+        reporter.performance(warning)
     reporter.validate_sources()
     reporter.progress("saving outputs", 0, 1)
     canvas = dict(info["canvas"])
@@ -1614,6 +1656,7 @@ def _execute(request, reporter, folder, session, workspace):
         "load_upload_s": load_s,
         "engine_s": engine_s,
         "stages_s": dict(be.timer.t),
+        "kernels": kernels,
         "peak_vram_reserved_gib": peak_vram,
         "region": region,
         "reused_alignment": cached is not None,

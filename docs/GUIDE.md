@@ -243,6 +243,9 @@ The run's `report.json` keeps the counts apart:
 - `sharpness_rejected`: aligned lights left out as too blurry
 - `retained`: lights kept across the full field
 - `contributing`: retained lights with data inside the crop (stacks only)
+- `kernels`: per GPU stage, the path chosen (`kernel`, or a slower one), why, and the paths that
+  ran in this job. When a kernel couldn't be built, the window says the run was slower than it
+  should be; the stack is still complete.
 
 A small crop can have fewer contributing lights than the field retains, especially in a mosaic.
 That is not an alignment failure.
