@@ -229,6 +229,50 @@ class BridgeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 output_settings({"coverage_fits": "false"})
 
+    def test_stack_pixels_fast_path_matches_the_general_one_bit_for_bit(self):
+        import numpy as np
+        from unittest.mock import patch
+        from worker.bridge import ADU_SCALE
+
+        def general(img, offset=0.0):  # stack_pixels before its fast path, verbatim
+            out = (img + np.float32(offset)) / np.float32(ADU_SCALE)
+            finite = np.isfinite(out)
+            low, high = int(np.count_nonzero(finite & (out <= 0))), int(np.count_nonzero(finite & (out > 1)))
+            np.clip(out, np.float32(1 / ADU_SCALE), 1, out=out, where=finite)
+            if not finite.all():
+                invalid = ~finite
+                out[invalid] = np.nan_to_num(out[invalid], copy=False, nan=0.0)
+            return out.astype(np.float32, copy=False), low, high
+
+        def same(img, offset):
+            got, want = stack_pixels(img, offset), general(img, offset)
+            self.assertEqual(got[1:], want[1:])
+            self.assertEqual(got[0].dtype, np.float32)
+            np.testing.assert_array_equal(got[0].view(np.uint32), want[0].view(np.uint32))
+
+        rng = np.random.default_rng(81)
+        bits = rng.integers(0, 2**32, (64, 97), dtype=np.uint64).astype(np.uint32).view(np.float32)
+        low = np.float32(1 / ADU_SCALE)
+        edges = np.array([np.nan, -np.nan, np.inf, -np.inf, 0, -0.0, 1e-45, -1e-45, 65535, 131070, 131071,
+                          -2063, -2062.5, 128_000, 200_000, np.float32(3.4e38)], np.float32)
+        typical = rng.normal(2000, 300, (64, 97)).astype(np.float32)
+        holes = typical.copy()
+        holes[:, :30] = np.nan
+        for offset in (0.0, 206.0, 2063.0):
+            for img in (bits, edges.reshape(4, 4), typical, holes, np.full((5, 7), np.nan, np.float32),
+                        np.empty((0, 3), np.float32), typical.astype(np.float64), holes[:, ::3]):
+                with self.subTest(offset=offset, shape=img.shape, dtype=str(img.dtype)):
+                    same(img, offset)
+            # values landing exactly on the clip bounds, and just outside them
+            at = np.array([low, np.nextafter(low, np.float32(0)), 1, np.nextafter(np.float32(1), np.float32(2))],
+                          np.float32) * np.float32(ADU_SCALE) - np.float32(offset)
+            for k in range(len(at)):
+                same(np.concatenate([typical[0], at[k : k + 1]]), offset)
+        # ordinary blocks never build the masks of the general path
+        with patch("numpy.isfinite", side_effect=AssertionError("general path")):
+            stack_pixels(holes, 206.0)
+            stack_pixels(np.full((3, 3), np.nan, np.float32), 206.0)
+
     def test_stack_pixels_offset_headroom_and_fill(self):
         import numpy as np
         from worker.bridge import ADU_SCALE
