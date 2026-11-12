@@ -324,7 +324,7 @@ def save_image_outputs(
     import numpy as np
     from gpucoadd import coverage_preview, preview
     from fits_output import write_fits, coverage_chunks, stack_chunks, clipping_counts
-    from resource_guard import ResourcePressureError
+    from resource_guard import ResourcePressureError, check_ram
 
     check = check_cancel or (lambda: None)
     files = {}
@@ -384,6 +384,11 @@ def save_image_outputs(
             stack_header["HISTORY"] = f"Clipped samples: {low} low, {high} high"
         if clipping is not None:
             clipping.update(low=low, high=high)
+        # The read-back check compares the file with the written bytes kept in RAM when they fit
+        # (SH2-142's 235 MB stack: 0.35 s instead of 1.32 s for two SHA-256 passes); otherwise
+        # it hashes both, as before. The file is the same either way.
+        size = 3 * img.shape[0] * img.shape[1] * 4
+        verify = np.empty(size, np.uint8) if check_ram(size, "stack verification") else None
         write_fits(
             path,
             stack_header,
@@ -392,7 +397,9 @@ def save_image_outputs(
             stack_chunks(img[::-1], offset, stack_pixels, check),
             check,
             before_publish,
+            verify_buffer=verify,
         )
+        del verify
         files["stack_fits"] = str(path)
         if options["stack_preview"]:
             save_extra(

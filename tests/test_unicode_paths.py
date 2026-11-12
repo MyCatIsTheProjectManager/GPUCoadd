@@ -115,10 +115,10 @@ class OutputFailureTests(unittest.TestCase):
             self.assertEqual(self.warnings, [("coverage_png", "The frame count heat map (PNG)")])
         stack_write = fits_output.write_fits
 
-        def refuse_coverage(path, *args):
+        def refuse_coverage(path, *args, **kwargs):
             if "_coverage" in Path(path).name:
                 raise OSError("refused")
-            return stack_write(path, *args)
+            return stack_write(path, *args, **kwargs)
 
         self.warnings.clear()
         with tempfile.TemporaryDirectory() as d, patch("fits_output.write_fits", refuse_coverage):

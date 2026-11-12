@@ -10,7 +10,76 @@ import numpy as np
 from skimage.transform import SimilarityTransform
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from gpucoadd import match_to_ref, register, shift_match
+from gpucoadd import match_to_ref, neighbour_candidates, register, shift_match
+
+
+def previous_candidates(i, known, tried, gid, sky, depth, limit=2):
+    """The selection register() made before neighbour_candidates, verbatim, as the reference."""
+
+    def priority(j):
+        other = bool(gid[j] != gid[i])
+        if sky is not None and np.isfinite(sky[[i, j]]).all():
+            return (other, float(np.linalg.norm(sky[i] - sky[j])), depth[j], abs(j - i))
+        return (other, float("inf"), abs(j - i), depth[j])
+
+    return sorted((j for j in known if j not in tried), key=priority)[:limit]
+
+
+class NeighbourCandidates(unittest.TestCase):
+    def same_as_before(self, known, tried, gid, sky, depth, pending):
+        finite = None if sky is None else np.isfinite(sky).all(axis=1).tolist()
+        for i in pending:
+            for t in tried:
+                got = neighbour_candidates(i, known, t | {i}, gid.tolist(), sky, finite, depth)
+                self.assertEqual(got, previous_candidates(i, known, t | {i}, gid, sky, depth), (i, sorted(t)))
+
+    def test_random_sets_with_and_without_pointings(self):
+        rng = np.random.default_rng(11)
+        for case in range(40):
+            n = int(rng.integers(4, 401))
+            ra, dec = np.deg2rad(rng.uniform(180, 182, n)), np.deg2rad(rng.uniform(10, 11.5, n))
+            sky = np.c_[np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)]
+            if case % 3 == 1:
+                sky[rng.choice(n, max(1, n // 7), replace=False)] = np.nan
+            if case % 3 == 2:
+                sky[rng.choice(n, 1), 1] = np.inf
+            gid = rng.integers(0, 1 + case % 2, n)
+            depth = rng.integers(0, 4, n).tolist()
+            known = sorted(rng.choice(n, int(rng.integers(3, n + 1)) if n > 3 else n, replace=False).tolist())
+            pending = [i for i in range(n) if i not in known][:12] or [known[0]]
+            tried = [set(), set(rng.choice(known, min(len(known), 5)).tolist()), set(known[:-1])]
+            for sky_case in (sky, None):
+                self.same_as_before(known, tried, gid, sky_case, depth, pending)
+
+    def test_equal_and_nearly_equal_distances(self):
+        # a regular mosaic grid: many candidates at exactly the same distance, mirrored positions,
+        # and distances one floating-point step apart; ties must keep the lower index first
+        step = np.deg2rad(0.5)
+        ra, dec = np.meshgrid(np.arange(7) * step, np.arange(7) * step)
+        ra, dec = ra.ravel() + np.deg2rad(10), dec.ravel()
+        ra[5] = np.nextafter(ra[5], np.inf)
+        sky = np.c_[np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)]
+        n = len(sky)
+        gid = np.zeros(n, int)
+        for depth in ([0] * n, [k % 2 for k in range(n)]):
+            known = [k for k in range(n) if k != 24]
+            self.same_as_before(known, [set(), {23, 25}, {17, 31, 23}], gid, sky, depth, [24])
+        # exact ties: four candidates at distance 1, one a step further; the lowest index first
+        sky = np.array([[0, 0, 0], [0, 1, 0], [1, 0, 0], [0, 0, -1], [-1, 0, 0], [0, np.nextafter(1, 2), 0]], float)
+        gid, n = np.zeros(6, int), 6
+        for depth in ([0] * n, [1, 1, 0, 1, 0, 0]):
+            self.same_as_before(list(range(1, 6)), [set(), {2}], gid, sky, depth, [0])
+        self.assertEqual(neighbour_candidates(0, [1, 2, 3, 4, 5], {0}, gid.tolist(), sky, [True] * n, [0] * n, 5),
+                         [1, 2, 3, 4, 5])
+
+    def test_no_candidates_and_short_lists(self):
+        gid, sky = np.zeros(5, int), np.zeros((5, 3))
+        sky[:, 0] = 1
+        finite, depth = [True] * 5, [0] * 5
+        self.assertEqual(neighbour_candidates(0, [0, 1], {0, 1}, gid.tolist(), sky, finite, depth), [])
+        self.assertEqual(neighbour_candidates(0, [], {0}, gid.tolist(), sky, finite, depth), [])
+        self.assertEqual(neighbour_candidates(0, [1], {0}, gid.tolist(), sky, finite, depth), [1])
+        self.assertEqual(neighbour_candidates(0, [2, 1], {0}, gid.tolist(), None, None, depth), [1, 2])
 
 
 class RegistrationTests(unittest.TestCase):

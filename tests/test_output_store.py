@@ -71,6 +71,29 @@ class SafeOutputTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b"previous result")
             self.assertEqual(list(Path(folder).iterdir()), [path])
 
+    def test_stack_checked_against_ram_copy_when_it_fits_else_hashed(self):
+        img = np.random.default_rng(72).normal(2000, 500, (37, 29, 3)).astype(np.float32)
+        img[0, :2] = [[np.nan, np.inf, 0], [-0.0, 1, 2]]
+        options = output_settings({})
+        saved = {}
+        with tempfile.TemporaryDirectory() as folder:
+            for room in (True, False):
+                buffers = []
+                original = write_fits
+
+                def recording(*a, **k):
+                    buffers.append(k.get("verify_buffer"))
+                    return original(*a, **k)
+
+                with patch("resource_guard.check_ram", return_value=room), patch("fits_output.write_fits", recording):
+                    files = save_image_outputs(Path(folder) / str(room), img, None, fits.Header(), "s", 1, options)
+                self.assertEqual(len(buffers), 1)
+                self.assertEqual(buffers[0] is not None, room)
+                if room:
+                    self.assertEqual(buffers[0].nbytes, img.nbytes)
+                saved[room] = Path(files["stack_fits"]).read_bytes()
+        self.assertEqual(saved[True], saved[False])
+
     def test_export_conversion_keeps_original_bits_without_changing_input(self):
         from tools.benchmark_light_export import original_pixels
 
