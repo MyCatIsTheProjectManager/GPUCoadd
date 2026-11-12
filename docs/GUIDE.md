@@ -125,8 +125,8 @@ RGB backgrounds on, and turns off blurry-light rejection, feathering and gradien
 | Match gradients | Off | On (experimental) |
 
 - **Mosaics or changing haze:** Overlap matching with noise-based weights and noise-aware rejection
-  compares lights on the sky they share, which removes most brightness mismatch between panels and
-  between hazy and clear lights.
+  compares lights on the sky they share and weights hazy lights down. It gave the most signal on
+  mosaics taken over several nights.
 - **Leave out blurry lights:** off, so every aligned light is used. When on, lower limits drop more
   lights (focus drift, wind, poor seeing).
 - **Feather edges** blends each light in over this many pixels from its edge, hiding steps between
@@ -136,7 +136,8 @@ RGB backgrounds on, and turns off blurry-light rejection, feathering and gradien
   calibration. It switches off with other brightness methods or mixed groups and returns when
   available again, unless it was turned off manually.
 - **Match gradients** (Overlap matching only) removes smooth background differences between
-  overlapping lights. Weak or noisy overlaps can change faint structure. It doesn't replace flats.
+  overlapping lights. Weak or noisy overlaps can change faint structure. It doesn't replace flats:
+  without them, the lights' vignetting makes it add a broad dome across a mosaic.
 
 Stacks with both telescopes switch to Overlap matching and noise weights automatically, and
 noise-aware rejection becomes sigma clipping. The log lists the changes.

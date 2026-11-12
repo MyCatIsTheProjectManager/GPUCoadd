@@ -75,6 +75,8 @@ If none qualifies, the search widens to the whole pool, then falls back to sharp
 - **Star brightness:** scale from measured star flux ratios.
 - **Overlap matching:** differences on shared sky, solved across all lights
   ([overlap.py](../overlap.py)). Gradient matching (experimental) adds a fitted plane per light.
+  Without flats, S50 Pro lights are 4-12% darker in the corners, and the planes fitted to that
+  vignetting add up to a broad dome across a mosaic.
 
 All are scale and offset corrections, optionally with a plane. RGB equalization matches each
 channel's background to the reference light's green; it is not colour calibration. Noise weights
