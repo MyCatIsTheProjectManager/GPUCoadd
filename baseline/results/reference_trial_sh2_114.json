@@ -71,8 +71,8 @@
   "stack_file": "out\\reference_trial\\sh2_114\\session\\Mixed_Targets_5194x10sec_2026-07-15_2026-08-20_2026-10-29_233750_gpucoadd.fits"
  },
  "measured": {
-  "heat_map_s": 192.1,
-  "stack_s": 385.7,
+  "heat_map_s": 173.0,
+  "stack_s": 161.1,
   "alignment": {
    "reference": "SH2-114\\lights\\Light_mosaic_SH2-114_10.0s_LP_20260816-220334.fit",
    "reference_choice": {
@@ -141,6 +141,6 @@
     "ellipticity": 0.1475
    }
   },
-  "stack_file": "out\\reference_trial\\sh2_114\\measured\\Mixed_Targets_5194x10sec_2026-07-15_2026-08-20_2026-10-29_234728_gpucoadd.fits"
+  "stack_file": "out\\reference_trial\\sh2_114\\measured\\Mixed_Targets_5194x10sec_2026-07-15_2026-08-20_2026-11-12_125845_gpucoadd.fits"
  }
 }

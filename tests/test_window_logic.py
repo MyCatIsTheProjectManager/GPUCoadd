@@ -36,11 +36,11 @@ class Texts(unittest.TestCase):
         self.assertEqual(logic.seconds_text(75), "1m 15s")
 
     def test_paths(self):
-        self.assertEqual(logic.norm_path("E:\\Seestar\\IC 63\\"), "E:/Seestar/IC 63")
+        self.assertEqual(logic.norm_path("D:\\Astro\\IC 63\\"), "D:/Astro/IC 63")
         self.assertEqual(logic.parent_path("E:/a/b"), "E:/a")
         self.assertEqual(logic.base_name("E:/a/b/"), "b")
-        self.assertTrue(logic.is_sub_copy_folder("E:/Seestar/IC 63_sub"))
-        self.assertFalse(logic.is_sub_copy_folder("E:/Seestar/IC 63"))
+        self.assertTrue(logic.is_sub_copy_folder("D:/Astro/IC 63_sub"))
+        self.assertFalse(logic.is_sub_copy_folder("D:/Astro/IC 63"))
 
     def test_output_plan(self):
         self.assertEqual(logic.output_plan_text({}), "Next stack saves 1 image file(s): stacked image (FITS).")

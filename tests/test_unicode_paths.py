@@ -68,7 +68,7 @@ class NameTests(unittest.TestCase):
         self.assertEqual(fits_text("NGC_7023"), "NGC_7023")
 
     def test_target_from_the_folder_name_keeps_its_letters(self):
-        paths = [Path("E:/Seestar S50/Čačak Кассиопея/lights/a.fit")]
+        paths = [Path("D:/Astro/Čačak Кассиопея/lights/a.fit")]
         identity = image_identity(paths, [0], headers=[{}])
         self.assertEqual(identity["target"], "Čačak_Кассиопея")
         self.assertTrue(identity["basename"].startswith("Čačak_Кассиопея_"))

@@ -71,8 +71,8 @@
   "stack_file": "out\\reference_trial\\68cyg\\session\\68_Cygni_279x10sec_2026-07-12_2026-10-29_231327_gpucoadd.fits"
  },
  "measured": {
-  "heat_map_s": 15.7,
-  "stack_s": 15.6,
+  "heat_map_s": 13.0,
+  "stack_s": 10.1,
   "alignment": {
    "reference": "68 Cygni\\lights\\Light_mosaic_68 Cygni_10.0s_IRCUT_20260712-220858.fit",
    "reference_choice": {
@@ -141,6 +141,6 @@
     "ellipticity": 0.1544
    }
   },
-  "stack_file": "out\\reference_trial\\68cyg\\measured\\68_Cygni_279x10sec_2026-07-12_2026-10-29_232131_gpucoadd.fits"
+  "stack_file": "out\\reference_trial\\68cyg\\measured\\68_Cygni_279x10sec_2026-07-12_2026-11-12_124719_gpucoadd.fits"
  }
 }

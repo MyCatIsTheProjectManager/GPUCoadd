@@ -70,8 +70,8 @@
   "stack_file": "out\\reference_trial\\sh2_142\\session\\Mixed_Targets_351x30sec_2026-09-30_2026-10-07_2026-10-29_230923_gpucoadd.fits"
  },
  "measured": {
-  "heat_map_s": 21.2,
-  "stack_s": 39.5,
+  "heat_map_s": 17.5,
+  "stack_s": 23.6,
   "alignment": {
    "reference": "SH2-142\\lights\\Light_NGC 7380_30.0s_LP_20261003-213800.fit",
    "reference_choice": {
@@ -129,16 +129,16 @@
     "ellipticity": 0.1228
    },
    "outer": {
-    "stars": 2019,
+    "stars": 2020,
     "fwhm_px": 3.568,
     "ellipticity": 0.4315
    },
    "all": {
-    "stars": 6398,
+    "stars": 6399,
     "fwhm_px": 3.131,
     "ellipticity": 0.2852
    }
   },
-  "stack_file": "out\\reference_trial\\sh2_142\\measured\\Mixed_Targets_351x30sec_2026-09-30_2026-10-07_2026-10-29_231946_gpucoadd.fits"
+  "stack_file": "out\\reference_trial\\sh2_142\\measured\\Mixed_Targets_351x30sec_2026-09-30_2026-10-07_2026-11-12_124832_gpucoadd.fits"
  }
 }

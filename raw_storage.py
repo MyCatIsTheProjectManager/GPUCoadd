@@ -108,11 +108,8 @@ class DiskLight:
         return read_crop(self.path, self.simple, (a, b, c, d))
 
 
-# Crops of file-backed lights are read by a few threads ahead of the one being calibrated: one
-# light after another on the main thread, the reads were 70% of a 5,194-light stack (SH2-114,
-# lights on disk: 220 s of 313 s), almost all of it waiting on the drive. File reads release the
-# GIL, and an NVMe drive serves several at once (1.65 ms per uncached crop alone, 0.53 ms with
-# 8 readers). The crops are the same bytes either way.
+# Crops of file-backed lights are read by a few threads ahead of the one being calibrated; file
+# reads release the GIL and a drive serves several at once.
 READ_THREADS = min(8, os.cpu_count() or 1)
 READ_AHEAD_CROPS = 256
 READ_AHEAD_BYTES = 128 << 20  # raw bytes read ahead and not yet used, at most

@@ -1819,9 +1819,7 @@ def neighbour_candidates(i, known, tried, gid, sky, finite, depth, limit=2):
     with both pointings finite, the nearest pointing, the lower chain depth and the nearer place in
     the session; without them, the nearer place in the session, then depth. Equal keys keep the
     lower index first (stable sort). gid, finite, depth: lists per light; sky: (n, 3) unit vectors
-    or None. The distance is np.linalg.norm of sky[i] - sky[j], one candidate row at a time from
-    one subtraction for all of them: the same values as a subtraction per pair, 3.6 times faster
-    on a set like M 86 (1,293 lights, 607 aligned through neighbours)."""
+    or None. The distance is np.linalg.norm of sky[i] - sky[j], per candidate row."""
     cand = [j for j in known if j not in tried]
     both = sky is not None and finite[i]
     diff = sky[i] - sky[cand] if both and cand else None
@@ -1841,9 +1839,8 @@ NEIGHBOUR_ROUNDS = 6  # rounds of neighbour alignment; each tries up to two alig
 
 @contextmanager
 def dropping_queued_on_error(ex):
-    """When the block fails (a cancel, most often), drop the pool's queued tasks: its shutdown then
-    waits only for those already running, not every star match still queued. A cancel 2 s into
-    M 86's registration (1,293 lights) took 15.7 s to end the worker before."""
+    """When the block fails (e.g. a cancel), drop the pool's queued tasks, so its shutdown waits
+    only for those already running."""
     try:
         yield ex
     except BaseException:
@@ -1896,8 +1893,7 @@ def register(
     finite = None if sky is None else np.isfinite(sky).all(axis=1).tolist()
     with pool if pool is not None else ProcessPoolExecutor(workers) as ex, dropping_queued_on_error(ex):
         results = []
-        # at most 4 lights per task: a cancel waits for the tasks already running (40-light tasks on
-        # M 86 kept a cancelled worker running 15 s); the results and their order are the same
+        # at most 4 lights per task: a cancel waits for the tasks already running
         chunk = max(1, min(4, len(jobs) // (workers * 4)))
         for j, result in enumerate(ex.map(match_to_ref, jobs, chunksize=chunk), 1):
             results.append(result)
@@ -2292,12 +2288,9 @@ def light_sizes(backend, frames, cached=None):
 
 
 def register_while_measuring(backend, lights, stats, args, kwargs):
-    """register(*args, **kwargs) on a thread of its own while this thread measures the statistics
-    of `lights` (backend.stats of each calibrated light, into `stats`) on the GPU, which is
-    otherwise idle during registration: the stack job used to calibrate every light again only
-    to measure them (2.1-3.4 s for 133-351 S50 Pro lights). The same calls on the same lights, so
-    the same values. Registration reports progress and cancellation as before; this thread emits
-    nothing. Returns register()'s result once both are done."""
+    """register(*args, **kwargs) on its own thread while this thread measures the statistics of
+    `lights` (backend.stats of each calibrated light, into `stats`) on the otherwise idle GPU.
+    Only registration reports progress. Returns register()'s result."""
     from resource_guard import check_gpu
 
     T = backend.timer

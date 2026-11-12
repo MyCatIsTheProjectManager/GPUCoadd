@@ -245,10 +245,8 @@ def stack_pixels(img, offset=0.0, *, count_clipping=True):
     out = np.add(img, np.float32(offset))
     out /= np.float32(ADU_SCALE)  # the same roundings as (img + offset) / ADU_SCALE
     if out.dtype == np.float32 and out.size:
-        # The usual block: every covered value already within the clip range, no infinities.
-        # The smallest and largest values ignoring NaN prove it in two quick passes; then only
-        # NaN has to become 0, which fmax does without masks. 3.9 times faster than the general
-        # path below on a 1.36 GB stack, the same bits; other blocks take the general path.
+        # The usual block: every covered value within the clip range, no infinities (shown by the
+        # smallest and largest values ignoring NaN). Only NaN must become 0, which fmax does.
         low, high = np.fmin.reduce(out, axis=None), np.fmax.reduce(out, axis=None)
         if np.isnan(low):  # no covered pixel at all
             out.fill(0)
@@ -430,15 +428,12 @@ def save_image_outputs(
         stack_header["ADUSCALE"] = (ADU_SCALE, "ADU = value x ADUSCALE - ADUOFFS")
         stack_header["ADUOFFS"] = (float(offset), "camera offset of the reference light, ADU")
         stack_header["HISTORY"] = "Pixels: (ADU + ADUOFFS) / ADUSCALE in 0..1; uncovered pixels are 0"
-        # The read-back check compares the file with the written bytes kept in RAM when they fit
-        # (SH2-142's 235 MB stack: 0.35 s instead of 1.32 s for two SHA-256 passes); otherwise
-        # it hashes both, as before. The file is the same either way.
+        # The read-back check compares with the written bytes kept in RAM when they fit, else
+        # with SHA-256.
         size = 3 * img.shape[0] * img.shape[1] * 4
         verify = np.empty(size, np.uint8) if check_ram(size, "stack verification") else None
-        # Clipped samples are counted while the pixels are converted for writing (a separate
-        # counting pass converted the whole stack once more: 2.9 s for a 1.36 GB stack). They are
-        # expected to be 0, which the header assumes; otherwise that file is stopped before it is
-        # published and written again with the counts in its header.
+        # Clipped samples are counted while writing. The header assumes 0; otherwise the file is
+        # stopped before it is published and written again with the counts.
         counts = [0, 0]
 
         def convert(block, offset):

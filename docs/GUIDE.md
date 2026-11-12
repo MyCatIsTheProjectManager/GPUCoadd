@@ -65,11 +65,8 @@ and each time the window is opened from the Start menu, it starts empty.
 
 Progress, timings, notices, the option sections and the activity log are on the right, with
 **Save Activity Log**, **Cancel Operation** and **Close** below. Time estimates are per stage.
-Cancelling stops at the next checkpoint, and the log lists any file the job saved before it.
-If the worker hasn't stopped after 20 s, the button becomes **Force Stop**. It ends the worker and
-every process it started, then removes this job's unfinished files, leaving other jobs' files alone.
-The message says which saved files were confirmed; a file can still have been saved just before
-the stop.
+Cancelling stops at the next checkpoint. If the worker hasn't stopped after 20 s, the button
+becomes **Force Stop**: it ends the worker and removes the job's unfinished files.
 
 ### Stage circles
 
@@ -145,9 +142,8 @@ Stacks with both telescopes switch to Overlap matching and noise weights automat
 noise-aware rejection becomes sigma clipping. The log lists the changes.
 
 Changing the alignment, the blurry-light filter, the folders or the group ticks makes the heat map
-out of date; other settings don't. After a change to the blurry-light filter alone, the next heat
-map reuses the star detection and alignment of the previous one, so it takes seconds instead of a
-full analysis. Every run saves its settings in its `report.json`.
+out of date; other settings don't. A new blurry-light limit reuses the previous alignment. Every
+run saves its settings in its `report.json`.
 
 ## Engine settings
 
@@ -247,9 +243,7 @@ The run's `report.json` keeps the counts apart:
 - `sharpness_rejected`: aligned lights left out as too blurry
 - `retained`: lights kept across the full field
 - `contributing`: retained lights with data inside the crop (stacks only)
-- `kernels`: per GPU stage, the path chosen (`kernel`, or a slower one), why, and the paths that
-  ran in this job. When a kernel couldn't be built, the window says the run was slower than it
-  should be; the stack is still complete.
+- `kernels`: per GPU stage, the path used and why (e.g. a kernel that couldn't be built)
 
 A small crop can have fewer contributing lights than the field retains, especially in a mosaic.
 That is not an alignment failure.

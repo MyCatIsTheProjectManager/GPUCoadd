@@ -71,8 +71,8 @@
   "stack_file": "out\\reference_trial\\ic1396\\session\\HIP_106890_182x30sec_2026-10-03_2026-10-29_231127_gpucoadd.fits"
  },
  "measured": {
-  "heat_map_s": 22.3,
-  "stack_s": 39.7,
+  "heat_map_s": 15.1,
+  "stack_s": 25.6,
   "alignment": {
    "reference": "IC 1396\\s50pro\\lights\\Light_mosaic_HIP 106890_30.0s_LP_20261003-232427.fit",
    "reference_choice": {
@@ -141,6 +141,6 @@
     "ellipticity": 0.1153
    }
   },
-  "stack_file": "out\\reference_trial\\ic1396\\measured\\HIP_106890_182x30sec_2026-10-03_2026-10-29_232041_gpucoadd.fits"
+  "stack_file": "out\\reference_trial\\ic1396\\measured\\HIP_106890_182x30sec_2026-10-03_2026-11-12_124912_gpucoadd.fits"
  }
 }

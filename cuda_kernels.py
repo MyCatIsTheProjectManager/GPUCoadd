@@ -79,8 +79,8 @@ class Double:
         self.value = float(value)
 
 
-# A cache file: this header, the SHA-256 of the cubin, the cubin. The driver is given a cubin
-# without its length, so a damaged or truncated file must be caught before it reaches it.
+# A cache file: this header, the cubin's SHA-256, the cubin. The driver reads a cubin without its
+# length, so a damaged file is caught here.
 MAGIC = b"GPUCoadd cubin 1\n"
 
 
@@ -114,9 +114,8 @@ def _write_cache(path, data):
 
 class Module:
     """Compile (or load from the cache) CUDA C `source` and launch its extern "C" kernels.
-    A cached cubin that is damaged, or that the driver refuses (e.g. after a driver change), is
-    compiled again and loaded from memory, and the cache file is replaced when it can be: before,
-    the stage fell back to torch and the same file was tried again on every run."""
+    A cached cubin that is damaged or refused by the driver is compiled again and loaded from
+    memory; the cache file is replaced when possible."""
 
     def __init__(self, source, fmad=False):
         _init()

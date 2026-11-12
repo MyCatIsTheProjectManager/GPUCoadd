@@ -11,9 +11,8 @@ refer to the source repository; the installed copy contains only the program and
 - NVIDIA GPU with compute capability 7.5 or newer. Setup advises a driver update below 570.
 - [worker/selftest.py](../worker/selftest.py) runs six synthetic Bayer lights through alignment and
   stacking. It passes when all six align, at least 20 stars are measurable, the median position
-  error is at most 0.3 px and the median star width is within 25% of the rendered width. When a
-  GPU kernel can't be built, its stage runs on a slower torch path: the self-test then reports
-  `slow` with the build error, and setup completes and shows it.
+  error is at most 0.3 px and the median star width is within 25% of the rendered width. If a GPU
+  kernel can't be built, it reports `slow` and setup still completes.
 - Window: [GPUCoadd/gpucoadd_qt](../GPUCoadd/gpucoadd_qt) (PyQt6), opened on its own by
   [start_gpucoadd.pyw](../start_gpucoadd.pyw) (the Start menu entry runs it with `pythonw.exe`) or
   from Siril's Scripts menu by [GPUCoadd/GPUCoadd.py](../GPUCoadd/GPUCoadd.py). Both start the same
@@ -141,13 +140,13 @@ RTX 3060 12 GB, Intel i7-6700K, NVMe SSD. Single observations, not guarantees.
 
 | Target | Lights | Layout | Canvas | Heat map | Stack |
 |---|---|---|---|---:|---:|
-| [IC 63](../baseline/results/reference_trial_ic63.json) | 31 S50 Pro | Single field | 2428 × 3986 | 8.1 s | 8.7 s |
-| [68 Cygni](../baseline/results/reference_trial_68cyg.json) | 279 S50 | Mosaic | 2643 × 4280 | 15.7 s | 15.6 s |
-| [NGC 6823](../baseline/results/reference_trial_ngc6823.json) | 498 S50 | Mosaic | 2836 × 4049 | 19.2 s | 23.1 s |
-| [SH2-142](../baseline/results/reference_trial_sh2_142.json) | 351 S50 Pro | Single field | 4313 × 4553 | 21.2 s | 39.5 s |
-| [IC 1396](../baseline/results/reference_trial_ic1396.json) | 182 S50 Pro | Mosaic | 10636 × 10685 | 22.3 s | 39.7 s |
-| [NGC 7023](../baseline/results/reference_trial_ngc7023.json) | 230 S50 Pro + 210 S50 | Two telescopes | 4523 × 4575 | 124.0 s | 39.4 s |
-| [SH2-114](../baseline/results/reference_trial_sh2_114.json) | 5194 S50 | Mosaic | 3037 × 4419 | 192.1 s | 385.7 s |
+| [IC 63](../baseline/results/reference_trial_ic63.json) | 31 S50 Pro | Single field | 2428 × 3986 | 6.8 s | 6.9 s |
+| [68 Cygni](../baseline/results/reference_trial_68cyg.json) | 279 S50 | Mosaic | 2643 × 4280 | 13.0 s | 10.1 s |
+| [NGC 6823](../baseline/results/reference_trial_ngc6823.json) | 498 S50 | Mosaic | 2836 × 4049 | 16.8 s | 14.5 s |
+| [SH2-142](../baseline/results/reference_trial_sh2_142.json) | 351 S50 Pro | Single field | 4313 × 4553 | 17.5 s | 23.6 s |
+| [IC 1396](../baseline/results/reference_trial_ic1396.json) | 182 S50 Pro | Mosaic | 10636 × 10685 | 15.1 s | 25.6 s |
+| [NGC 7023](../baseline/results/reference_trial_ngc7023.json) | 230 S50 Pro + 210 S50 | Two telescopes | 4523 × 4575 | 107.4 s | 28.1 s |
+| [SH2-114](../baseline/results/reference_trial_sh2_114.json) | 5194 S50 | Mosaic | 3037 × 4419 | 173.0 s | 161.1 s |
 
 An S50 Pro light has four times the pixels of an S50 light. With two telescopes, the Overlap
 matching fit runs during the heat map, which is why NGC 7023's heat map is long.
@@ -196,6 +195,21 @@ Tests (CUDA tests skip without a GPU):
 ```powershell
 & .\.venv\Scripts\python.exe -m unittest discover -s tests
 ```
+
+Environment switches, for tests (first value is the default):
+
+| Variable | Values | Selects |
+|---|---|---|
+| `GPUCOADD_STORAGE` | `auto`, `gpu`, `ram`, `disk` | Where raw lights are held |
+| `GPUCOADD_SKY_STORAGE` | `auto`, `gpu`, `ram`, `disk` | Where Overlap matching's low-resolution lights are held |
+| `GPUCOADD_CANVAS` | `auto`, `ram`, `disk` | Where the output canvas is held |
+| `GPUCOADD_REFERENCE` | `measured`, `session` | Automatic reference rule |
+| `GPUCOADD_REGISTRATION` | unset, `reference` | astroalign's own triangle preparation |
+| `GPUCOADD_WEIGHTS` | `rgb`, `green` | Noise weights per channel or from green |
+| `GPUCOADD_TILE_LIGHTS` | unset, `all` | Every light in every tile |
+| `GPUCOADD_RCD` | unset, `jiterator`, `reference` | RCD implementation |
+| `GPUCOADD_CALIBRATE`, `_WARP`, `_SORT`, `_CLIP`, `_OVERLAP` | unset, `torch` | torch instead of the CUDA kernel |
+| `GPUCOADD_SYNC_TIMING` | unset, `0` | `0`: stage timers don't wait for the GPU |
 
 Build the setup program from the pinned download manifest (`--offline`). It ships the program, the
 README, this reference, the guide, the licence and the notices; no tests, tools or measurements:

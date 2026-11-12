@@ -284,9 +284,7 @@ def direct_source(path):
 
 def read_crop(path, source, box):
     """Engine rows a:b, columns c:d of a plain FITS light (source: direct_source()). Only the
-    stored rows of the crop are read, in one read of the file opened read-only (the same bytes a
-    memory mapping would give, without a page fault per 4 KB: 0.26 ms instead of 0.59 ms for a
-    300-row S50 crop from the file cache)."""
+    crop's stored rows are read, in one read of the file opened read-only."""
     layout, offset, float_scale = source
     H, W = layout.stored_shape
     dtype = np.dtype(STORED[layout.bitpix])

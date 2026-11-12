@@ -33,10 +33,10 @@ from worker.bridge import (
 
 class BridgeTests(unittest.TestCase):
     def test_seestar_sub_copies_are_never_read(self):
-        self.assertEqual(light_folders({"lights_dirs": ["E:/Seestar S50/IC 63/lights"]}), ["E:/Seestar S50/IC 63/lights"])
-        for folder in ("E:/Seestar S50/NGC 7023/NGC 7023_sub", "E:/Seestar S50/M 42/M 42_mosaic_SUB/"):
+        self.assertEqual(light_folders({"lights_dirs": ["D:/Astro/IC 63/lights"]}), ["D:/Astro/IC 63/lights"])
+        for folder in ("D:/Astro/NGC 7023/NGC 7023_sub", "D:/Astro/M 42/M 42_mosaic_SUB/"):
             with self.subTest(folder=folder), self.assertRaisesRegex(ValueError, "_sub"):
-                light_folders({"lights_dirs": ["E:/Seestar S50/IC 63/lights", folder]})
+                light_folders({"lights_dirs": ["D:/Astro/IC 63/lights", folder]})
 
     def test_cached_header_metadata_matches_reads_without_more_io(self):
         import numpy as np

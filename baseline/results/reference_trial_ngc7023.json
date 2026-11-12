@@ -73,8 +73,8 @@
   "stack_file": "out\\reference_trial\\ngc7023\\session\\NGC_7023_230x30sec+210x10sec_2026-03-10_2026-09-30_2026-10-29_232450_gpucoadd.fits"
  },
  "measured": {
-  "heat_map_s": 124.0,
-  "stack_s": 39.4,
+  "heat_map_s": 107.4,
+  "stack_s": 28.1,
   "alignment": {
    "reference": "NGC 7023\\s50pro\\lights\\Light_NGC 7023_30.0s_IRCUT_20260930-225420.fit",
    "reference_choice": {
@@ -144,6 +144,6 @@
     "ellipticity": 0.1382
    }
   },
-  "stack_file": "out\\reference_trial\\ngc7023\\measured\\NGC_7023_230x30sec+210x10sec_2026-03-10_2026-09-30_2026-10-29_232735_gpucoadd.fits"
+  "stack_file": "out\\reference_trial\\ngc7023\\measured\\NGC_7023_230x30sec+210x10sec_2026-03-10_2026-09-30_2026-11-12_125309_gpucoadd.fits"
  }
 }
