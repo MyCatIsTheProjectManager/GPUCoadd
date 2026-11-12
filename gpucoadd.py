@@ -872,6 +872,7 @@ class GPUBackend:
             )
         self.h, self.w = map(int, sizes[0])
         self.transfer_bytes = 0
+        self.read_ahead = True  # file-backed crops read by background threads (warp_tile); same pixels
         if log:
             place = {
                 "gpu": "GPU memory",
@@ -951,12 +952,12 @@ class GPUBackend:
         self.flat_inv = {s: f for s, f in self.flat_inv.items() if s in shapes}
         self.torch.cuda.empty_cache()
 
-    def calibrate(self, i, a=0, b=None, c=0, d=None):
+    def calibrate(self, i, a=0, b=None, c=0, d=None, ahead=None):
         k = i if self.slot is None else self.slot[i]
         shape = self.raw[k].shape
         b = shape[0] if b is None else b
         d = shape[1] if d is None else d
-        raw = self.raw_crop(k, (a, b, c, d))
+        raw = self.raw_crop(k, (a, b, c, d), ahead)
         x = raw.to(self.torch.int32).bitwise_and_(0xFFFF).float()
         return (x - self.pedestals[k]) * self.flat_inv[tuple(shape)][a:b, c:d]
 
@@ -1020,12 +1021,14 @@ class GPUBackend:
                 "instead of being held in RAM. Same pixels; stacking takes a little longer."
             )
 
-    def raw_crop(self, k, box):
-        """Upload only the requested crop in external-storage modes."""
+    def raw_crop(self, k, box, ahead=None):
+        """Upload only the requested crop in external-storage modes. ahead: the same crop, already
+        read from the file (ReadAhead), or None to read it here."""
         a, b, c, d = box
         r = self.raw[k]
         if not isinstance(r, self.torch.Tensor):  # a DiskLight: disk mode, or released from RAM
-            raw = self.torch.from_numpy(np.ascontiguousarray(r.crop(a, b, c, d)).view(np.int16))
+            crop = r.crop(a, b, c, d) if ahead is None else ahead
+            raw = self.torch.from_numpy(np.ascontiguousarray(crop).view(np.int16))
         else:
             raw = r[a:b, c:d]
         if raw.device != self.dev and not raw.is_cuda:
@@ -1207,6 +1210,22 @@ class GPUBackend:
         # Tile-local capacity only: reused within the unchanged batches, then released
         # before integration. Batch locals must die before allocating the next RGB image.
         calibration_buffer = None
+        # Lights read from their files (disk mode, or released from RAM): their crops are read by
+        # background threads in the order the batches below use them (raw_storage.ReadAhead).
+        ahead = None
+        if self.storage_mode != "gpu" and self.read_ahead:
+            from raw_storage import DiskLight, ReadAhead
+
+            items = []
+            for j, i in enumerate(frames):
+                r = self.raw[i if self.slot is None else self.slot[i]]
+                if boxes[j] is not None and isinstance(r, DiskLight):
+                    items.append((j, r, tuple(int(v) for v in boxes[j])))
+            if len(items) > 1:
+                ahead = ReadAhead(items)
+
+        def read(j):
+            return None if ahead is None else ahead.take(j)
 
         def warp_batch(js):
             nonlocal calibration_buffer
@@ -1233,7 +1252,7 @@ class GPUBackend:
                             unit=fold,
                         )
                     else:
-                        crops = [self.raw_crop(k, box) for k, box in zip(slots, bx)]
+                        crops = [self.raw_crop(k, box, read(j)) for j, k, box in zip(js, slots, bx)]
                         flats = [
                             self.flat_inv[tuple(self.raw[k].shape)][a:b, c:d] for k, (a, b, c, d) in zip(slots, bx)
                         ]
@@ -1245,7 +1264,7 @@ class GPUBackend:
                 else:
                     for q, j in enumerate(js):
                         a, b, c, d = boxes[j]
-                        crop = self.calibrate(frames[j], a, b, c, d)
+                        crop = self.calibrate(frames[j], a, b, c, d, read(j))
                         # Each crop reflects at its own boundary before batching.
                         iy = torch.arange(hmax, device=self.dev) % (2 * (b - a - 1))
                         ix = torch.arange(wmax, device=self.dev) % (2 * (d - c - 1))
@@ -1289,13 +1308,17 @@ class GPUBackend:
                     interp=self.interp,
                 )
 
-        for k0 in range(0, len(frames), batch):
-            js = [j for j in range(k0, min(k0 + batch, len(frames))) if boxes[j] is not None]
-            for j in range(k0, min(k0 + batch, len(frames))):
-                if boxes[j] is None:
-                    stack[j] = float("nan")
-            if js:
-                warp_batch(js)
+        try:
+            for k0 in range(0, len(frames), batch):
+                js = [j for j in range(k0, min(k0 + batch, len(frames))) if boxes[j] is not None]
+                for j in range(k0, min(k0 + batch, len(frames))):
+                    if boxes[j] is None:
+                        stack[j] = float("nan")
+                if js:
+                    warp_batch(js)
+        finally:
+            if ahead is not None:
+                ahead.close()
 
     def integrate(self, stack, kappa, iters, weights=None, kept=False, rejection="sigma", noise=None, feather=None):
         """Clipped mean per pixel and channel; kept=True also returns how many samples survived
