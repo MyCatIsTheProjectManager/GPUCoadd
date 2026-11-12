@@ -2197,6 +2197,50 @@ def light_sizes(backend, frames, cached=None):
     return W, H
 
 
+def register_while_measuring(backend, lights, stats, args, kwargs):
+    """register(*args, **kwargs) on a thread of its own while this thread measures the statistics
+    of `lights` (backend.stats of each calibrated light, into `stats`) on the GPU, which is
+    otherwise idle during registration: the stack job used to calibrate every light again only
+    to measure them (2.1-3.4 s for 133-351 S50 Pro lights). The same calls on the same lights, so
+    the same values. Registration reports progress and cancellation as before; this thread emits
+    nothing. Returns register()'s result once both are done."""
+    from resource_guard import check_gpu
+
+    T = backend.timer
+    took = [0.0]
+
+    def run():
+        start = time.perf_counter()
+        try:
+            return register(*args, **kwargs)
+        finally:
+            took[0] = time.perf_counter() - start
+
+    with ThreadPoolExecutor(1, thread_name_prefix="gpucoadd-register") as ex:
+        future = ex.submit(run)
+        try:
+            for i in lights:
+                if future.done() and future.exception() is not None:
+                    break  # registration failed or was cancelled: its error is raised below
+                w, h = frame_size(*light_sizes(backend, [i]), i)
+                check_gpu(backend, w * h * 64 + (256 << 20), "frame analysis")
+                with T("calibrate"):
+                    cfa = backend.calibrate(i)
+                with T("normalize"):
+                    stats[i] = backend.stats(cfa)
+                del cfa
+                validate_light_statistics(backend, i, stats[i])
+        except BaseException:
+            try:
+                future.result()  # registration owns its worker pool: let it finish before leaving
+            except BaseException:
+                pass
+            raise
+        result = future.result()
+    T.t["register (CPU)"] += took[0]
+    return result
+
+
 def validate_light_statistics(backend, i, stats, *, spread=False, noise=False):
     """Reject unusable measurements explicitly; never invent a scale or drop a light."""
     try:
@@ -2609,19 +2653,24 @@ def stack(
             ref_idx = int(q[int(np.nanargmin(fwhm[q]))])
         if progress:
             progress("registration", 0, max(0, n - 1))
-        with T("register (CPU)"):
-            mats, ratios = register(
-                stars,
-                ref_idx,
-                reg_workers,
-                transform,
-                progress=progress,
-                diagnostics=registration_info,
-                pointings=pointings,
-                pixel_scales=pixel_scales,
-                groups=groups,
-                pool=registration_pool,
+        registration = dict(
+            progress=progress,
+            diagnostics=registration_info,
+            pointings=pointings,
+            pixel_scales=pixel_scales,
+            groups=groups,
+            pool=registration_pool,
+        )
+        if coverage_only and backend.name == "gpu" and getattr(backend, "storage_mode", "gpu") == "gpu":
+            # A heat map measures the statistics the stack will need while the CPU registers
+            # (the GPU is idle then); the stack job reads them from the heat map.
+            mats, ratios = register_while_measuring(
+                backend, [i for i in loaded if i not in stats], stats, (stars, ref_idx, reg_workers, transform),
+                registration,
             )
+        else:
+            with T("register (CPU)"):
+                mats, ratios = register(stars, ref_idx, reg_workers, transform, **registration)
         star_bytes = sum(s.nbytes for s in stars)
         stars.clear()
         if passes:

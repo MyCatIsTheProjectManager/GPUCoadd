@@ -94,9 +94,12 @@ class CanvasTests(unittest.TestCase):
                 patch.object(be, "alloc_stack", side_effect=AssertionError("stack allocation in preview")),
                 patch.object(be, "warp_tile", side_effect=AssertionError("warping in preview")),
                 patch.object(be, "integrate", side_effect=AssertionError("integration in preview")),
-                patch.object(be, "stats", side_effect=AssertionError("normalization in preview")),
+                patch.object(be, "stats", return_value=fake_stats) as measured,
             ):
                 image, _, pi = stack(be, 32, 1, framing="union", coverage_only=True, log=lambda _: None)
+            # a GPU heat map measures the statistics the stack will need, once per light, while it
+            # registers; the CPU backend's preview needs none
+            self.assertEqual(measured.call_count, 3 if gpu else 0)
             self.assertIsNone(image)
             self.assertEqual(pi["coverage_kind"], "geometric_preview")
             self.assertEqual(pi["canvas"]["tiles"], 0)
