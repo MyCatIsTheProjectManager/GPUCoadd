@@ -65,7 +65,11 @@ and each time the window is opened from the Start menu, it starts empty.
 
 Progress, timings, notices, the option sections and the activity log are on the right, with
 **Save Activity Log**, **Cancel Operation** and **Close** below. Time estimates are per stage.
-Cancelling stops at the next checkpoint.
+Cancelling stops at the next checkpoint, and the log lists any file the job saved before it.
+If the worker hasn't stopped after 20 s, the button becomes **Force Stop**. It ends the worker and
+every process it started, then removes this job's unfinished files, leaving other jobs' files alone.
+The message says which saved files were confirmed; a file can still have been saved just before
+the stop.
 
 ### Stage circles
 

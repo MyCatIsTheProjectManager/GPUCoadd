@@ -804,6 +804,16 @@ def kernel_warnings(kernels):
     return warnings
 
 
+def cancel_message(published):
+    """What a cancelled job left. Exact here: the worker records each file as it puts it in place,
+    and a cancel never comes between the two. Files from earlier runs with other names are as
+    they were; one with the same name as a saved file was replaced by it."""
+    if not published:
+        return "Cancelled. No output file was saved; earlier results are as they were."
+    names = ", ".join(Path(p).name for p in published[:5]) + (f" and {len(published) - 5} more" if len(published) > 5 else "")
+    return f"Cancelled. Saved before the cancel: {names}. Other earlier results are as they were."
+
+
 def output_warning(output, exc, what):
     """Why an optional output (activity log, frames CSV) was not saved. An OSError is the
     environment refusing it (permission, full drive, lock, disconnected folder); anything else
@@ -830,12 +840,15 @@ def output_warning(output, exc, what):
 def write_optional(path, write):
     """Write an optional file through a temporary file in its folder, published only when
     complete, so a failure never leaves a partial file under the final name."""
+    from output_store import JOB, published
+
     path = Path(path)
-    temp = path.with_name(path.name + ".partial")
+    temp = path.with_name(f".{path.name}.{JOB['tag']}.partial" if JOB["tag"] else path.name + ".partial")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         write(temp)
         os.replace(temp, path)
+        published(path)
     finally:
         try:
             temp.unlink(missing_ok=True)
@@ -965,6 +978,7 @@ class Reporter:
         self.last_resource_check = 0
         self.resource_check = None
         self.storage_notices = {}
+        self.published = []  # output files this job has put in place, in order
         self.last_logged = -1
         self.cancel_path = Path(cancel_path)
         self.warnings = []
@@ -1020,6 +1034,11 @@ class Reporter:
                 log.close()
             except OSError:
                 pass
+
+    def publish(self, path):
+        """An output file is in place (output_store.published): recorded and announced."""
+        self.published.append(path)
+        self.emit("published", path=path)
 
     def performance(self, warning):
         """A GPU stage ran on a slower path because its kernel could not be built: a warning
@@ -1830,7 +1849,12 @@ def _run_request(request_path, session=None):
             folder, k = root / "runs" / f"{name}_{k}", k + 1
     outputs = output_settings(request.get("outputs", {}))
     reporter = Reporter(folder, request_path.with_suffix(".cancel"), save_log=outputs["activity_log"])
-    reporter.emit("started", started_utc=started, folder=str(folder), message="Operation started")
+    import output_store
+
+    # temporary output files carry this job's tag, and each output put in place is reported, so a
+    # window that has to end a stuck worker knows what to remove and what was saved
+    output_store.set_job(folder.name, reporter.publish)
+    reporter.emit("started", started_utc=started, folder=str(folder), tag=folder.name, message="Operation started")
     result = {}
     try:
         if session is not None:
@@ -1838,7 +1862,7 @@ def _run_request(request_path, session=None):
         result = execute(request, reporter, folder, session)
     except Cancelled:
         result = {"status": "cancelled", "folder": str(folder), "operation": request["operation"]}
-        reporter.message("Cancelled. Existing lights and earlier results are unchanged.")
+        reporter.message(cancel_message(reporter.published))
     except Exception as exc:
         result = {"status": "error", "folder": str(folder), "operation": request["operation"], "error": str(exc)}
         failure = build_failure(

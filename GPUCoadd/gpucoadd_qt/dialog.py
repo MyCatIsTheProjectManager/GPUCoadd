@@ -817,6 +817,12 @@ class GPUCoaddDialog(QDialog):
         self.timer = QTimer(self)
         self.timer.setInterval(500)
         self.timer.timeout.connect(self.tick)
+        # Cancel unanswered for FORCE_STOP_AFTER_S: the button becomes Force Stop (a hung worker)
+        self.force_timer = QTimer(self)
+        self.force_timer.setSingleShot(True)
+        self.force_timer.setInterval(logic.FORCE_STOP_AFTER_S * 1000)
+        self.force_timer.timeout.connect(self.offer_force_stop)
+        self.force_ready, self.forced, self.job_tag, self.published = False, None, None, []
         self.hardware_delay = QTimer(self)
         self.hardware_delay.setSingleShot(True)
         self.hardware_delay.setInterval(750)
@@ -1301,6 +1307,10 @@ class GPUCoaddDialog(QDialog):
         self.build.setEnabled(not busy and ready)
         self.hardware_retry.setEnabled(not busy and self.hardware_state != "checking")
         self.cancel.setEnabled(busy)
+        if not busy:  # a finished job leaves no pending Force Stop
+            self.force_timer.stop()
+            self.force_ready = False
+            self.cancel.setText("Cancel Operation")
         self.close_button.setEnabled(not busy)
         for check, _ in self.sections:
             check.setEnabled(not busy)
@@ -1373,6 +1383,7 @@ class GPUCoaddDialog(QDialog):
                 self.storage_panel.setVisible(False)
             self.started_at = time.time()
             self.stage_eta = None
+            self.job_tag, self.published, self.forced = None, [], None
             self.set_busy(True)
             self.stages.reset(operation, True, self.started_at)
             self.render_stages()
@@ -1465,7 +1476,11 @@ class GPUCoaddDialog(QDialog):
             self.append("ERROR: " + event.get("message", ""))
         elif kind == "storage":
             self.show_notice(self.notices.add(event))
+        elif kind == "published":  # an output file of this job is in place
+            self.published.append(event.get("path", ""))
         elif kind in ("log", "started", "text"):
+            if kind == "started":
+                self.job_tag = event.get("tag")  # in the names of this job's temporary output files
             self.append(event.get("message", ""))
 
     def read_worker_errors(self):
@@ -1559,6 +1574,9 @@ class GPUCoaddDialog(QDialog):
                 pass
 
     def worker_finished(self, exit_code, _status=None):
+        if self.forced is not None:
+            self.finish_forced()
+            return
         self.read_worker()
         self.read_worker_errors()
         if self.busy:
@@ -1615,10 +1633,72 @@ class GPUCoaddDialog(QDialog):
     def cancel_job(self):
         if not self.busy or not self.request_file:
             return
+        if self.force_ready:
+            self.force_stop()
+            return
         Path(logic.cancel_file(self.request_file)).write_text("cancel\n", encoding="utf-8")
         self.cancel.setEnabled(False)
         self.status.setText("Cancelling: waiting for the current work unit and registration workers to finish…")
         self.append(f"Cancellation requested at {logic.stamp()}.")
+        self.force_timer.start()
+
+    def offer_force_stop(self):
+        """Cancel has not been answered: the worker may hang (a driver stall, a stuck pool)."""
+        if not self.busy or self.forced is not None:
+            return
+        self.force_ready = True
+        self.cancel.setText("Force Stop")
+        self.cancel.setEnabled(True)
+        self.status.setText(logic.FORCE_STOP_OFFER)
+        self.append(logic.FORCE_STOP_OFFER)
+
+    def force_stop(self):
+        """End the worker and every process it started, check that each is gone (by pid and start
+        time), then remove this job's unfinished output files. Only when no process is left does
+        the window become idle (worker_finished -> finish_forced); otherwise new jobs stay off."""
+        self.cancel.setEnabled(False)
+        self.status.setText("Ending the worker and the processes it started…")
+        QApplication.processEvents()
+        pid = int(self.worker.processId() or 0)
+        if self.forced and self.forced.get("survivors"):  # Force Stop again: those left last time
+            procs, root = self.forced["survivors"], None
+        else:
+            procs, root = (logic.process_tree(pid), pid) if pid else ([], None)
+        survivors = logic.end_processes(procs, root)
+        self.append(f"Force Stop at {logic.stamp()}: ended {len(procs) - len(survivors)} of {len(procs)} worker "
+                    "processes.")
+        if survivors:
+            self.forced = {"survivors": survivors}
+        else:
+            results = self.results_folder()
+            unremoved = logic.remove_files(logic.job_leftovers([results], self.job_tag))
+            confirmed = [p for p in self.published if logic.norm_path(p).lower().startswith(results.lower() + "/")]
+            self.forced = {"message": logic.stop_message(confirmed, unremoved)}
+        if not self.worker_running():
+            self.finish_forced()
+
+    def finish_forced(self):
+        """The worker process has exited after Force Stop."""
+        forced = self.forced or {}
+        self.timer.stop()
+        self.stages.finish("cancelled", time.time())
+        self.render_stages()
+        self.session_dir, self.worker_persistent, self.releasing = None, False, False
+        self.cache_state.setText("GPU lights released")
+        if forced.get("survivors"):
+            message = logic.stop_message([], [], forced["survivors"])
+            self.status.setText(message)
+            self.append(message)
+            self.force_ready = True
+            self.cancel.setText("Force Stop")
+            self.cancel.setEnabled(True)  # still busy: no new job while a worker process is left
+            return
+        self.forced = None
+        self.remove_request_files()
+        self.set_busy(False)
+        self.status.setText(forced.get("message", "Stopped."))
+        self.progress_text.setText(f"Stopped at {logic.stamp()}")
+        self.append(forced.get("message", "Stopped."))
 
     def tick(self):
         elapsed = time.time() - self.started_at
@@ -1755,6 +1835,9 @@ class GPUCoaddDialog(QDialog):
             except OSError:
                 pass
         if self.worker_running() and not self.worker.waitForFinished(30000):
+            pid = int(self.worker.processId() or 0)
+            if pid:  # the worker and the processes it started (registration pool), not just the worker
+                logic.end_processes(logic.process_tree(pid), pid)
             self.worker.kill()
             self.worker.waitForFinished(5000)
 

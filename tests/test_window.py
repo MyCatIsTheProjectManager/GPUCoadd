@@ -165,6 +165,8 @@ class Window(unittest.TestCase):
         d.cancel.click()
         self.wait(lambda: not d.busy)
         self.assertEqual(d.status.text(), "Operation cancelled.")
+        self.assertFalse(d.force_ready, "a worker that answers the cancel is never offered Force Stop")
+        self.assertEqual(d.cancel.text(), "Cancel Operation")
         self.assertIn("failed", [s["state"] for s in d.stages.stages])
         self.assertFalse(d.worker_running(), "without Keep lights ready every job has its own worker")
 
@@ -187,6 +189,77 @@ class Window(unittest.TestCase):
         self.assertFalse(d.rgb_equal.isEnabled())
         d.choices["norm"].setCurrentIndex(0)
         self.assertTrue(d.rgb_equal.isChecked(), "RGB equalization comes back when available again")
+
+    def start_hung_job(self, out, keep_ready=False):
+        """Build Heat Map with a fake worker that stops answering (results in `out`)."""
+        d = self.d
+        d.keep_ready.setChecked(keep_ready)
+        d.set_target(self.root + "/IC 63")
+        d.custom_output.setChecked(True)
+        d.output.edit.setText(str(out))
+        d.force_timer.setInterval(300)
+        d.build.click()
+        self.wait(lambda: d.job_tag and Path(d.work, "runs", d.job_tag, "tree_ready").exists())
+        procs = self.logic.process_tree(d.worker.processId())
+        # the worker, its child and grandchild (a venv's python.exe also starts the real interpreter)
+        self.assertGreaterEqual(len(procs), 3)
+        return procs
+
+    def force_stop(self):
+        d = self.d
+        d.cancel.click()
+        self.wait(lambda: d.cancel.text() == "Force Stop" and d.cancel.isEnabled())
+        self.assertIn("has not answered the cancel request", d.status.text())
+        d.cancel.click()
+
+    def test_force_stop_ends_a_hung_worker_its_processes_and_unfinished_files(self):
+        for keep_ready in (False, True):
+            with self.subTest(keep_ready=keep_ready):
+                d = self.d
+                out = Path(self.root, f"hang {int(keep_ready)}")
+                out.mkdir()
+                # another job's unfinished file (another window may be writing it) and the user's own
+                other = out / ".fake_stack.fits.fake_analyze_1.zz.partial"
+                other.write_bytes(b"another job")
+                notes = out / "notes.partial.txt"
+                notes.write_text("mine")
+                procs = self.start_hung_job(out, keep_ready)
+                self.force_stop()
+                self.wait(lambda: not d.busy)
+                self.assertEqual([p for p in procs if self.logic.process_running(p)], [], "every process ended")
+                self.assertEqual(d.status.text(), "Stopped. No unfinished file of this job is left. No saved "
+                                 "outputs were confirmed; files may have been saved before the stop.")
+                left = sorted(str(p.relative_to(out)).replace("\\", "/") for p in out.rglob("*"))
+                self.assertEqual(left, sorted([other.name, notes.name, "fake_aligned"]))
+                self.assertEqual(d.cancel.text(), "Cancel Operation")
+                self.assertFalse(d.worker_running())
+        # the window works again: a new job starts and completes
+        d.output.edit.setText(self.root + "/IC 63")
+        d.build.click()
+        self.wait(lambda: not d.busy)
+        self.assertIsNotNone(d.analysis)
+
+    def test_force_stop_names_confirmed_saves_and_files_it_could_not_remove(self):
+        d = self.d
+        out = Path(self.root, "hang published")
+        out.mkdir()
+        self.start_hung_job(out)
+        held = next(out.glob(".fake_stack.fits.*.partial"))
+        with open(held, "rb"):  # another program has the unfinished file open: it can't be deleted
+            self.force_stop()
+            self.wait(lambda: not d.busy)
+        self.assertEqual(d.status.text(), f"Stopped. These unfinished files could not be removed: "
+                         f"{self.logic.norm_path(str(held))}. Other files may have been saved before the stop.")
+        self.assertEqual(Path(out, "fake_stack.fits").read_bytes(), b"complete")
+        d.cancel.click()  # idle again: Cancel does nothing
+        held.unlink()
+        out2 = Path(self.root, "hang published again")
+        out2.mkdir()
+        self.start_hung_job(out2)
+        self.force_stop()
+        self.wait(lambda: not d.busy)
+        self.assertEqual(d.status.text(), "Stopped. No unfinished file of this job is left. Confirmed saved by "
+                         "this job: fake_stack.fits. Other files may have been saved before the stop.")
 
     def test_failure_report_and_session_state(self):
         d = self.d

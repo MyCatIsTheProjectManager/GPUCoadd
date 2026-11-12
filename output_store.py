@@ -12,6 +12,26 @@ from raw_storage import available_ram, GIB
 BLOCK_BYTES = 4 << 20
 MARGIN = 64 << 20
 
+# The running job (worker/bridge.py sets it): its tag, the name of its run folder, unique per
+# job, goes into every temporary output file's name, so a window that had to end a stuck worker
+# removes that job's unfinished files and nothing another window may be writing. `published`
+# is told each output file the job has put in place.
+JOB = {"tag": "", "published": None}
+
+
+def set_job(tag="", published=None):
+    JOB.update(tag=tag, published=published)
+
+
+def temp_prefix(path):
+    """The mkstemp prefix of a temporary file for output `path`: hidden, named after it and the job."""
+    return "." + Path(path).name + "." + (JOB["tag"] + "." if JOB["tag"] else "")
+
+
+def published(path):
+    if JOB["published"] is not None:
+        JOB["published"](str(path))
+
 
 def existing_parent(path):
     path = Path(path).resolve()

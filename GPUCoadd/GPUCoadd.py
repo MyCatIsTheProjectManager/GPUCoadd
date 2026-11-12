@@ -9,6 +9,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from gpucoadd_qt.logic import process_parents, process_start  # noqa: E402
+
 MIN_VERSION = "1.4.0"
 # Siril's own variables for a script's connection; the worker must not inherit them
 SIRIL_VARIABLES = ("MY_PIPE", "MY_SOCKET", "SIRIL_PYTHON_CLI", "SIRIL_PYTHON_DEBUG")
@@ -62,55 +64,6 @@ def session_id(pid=None):
     except OSError:
         pass
     return ""
-
-
-def process_parents():
-    """{pid: (parent pid, exe name)} of all processes (Windows)."""
-    import ctypes
-    from ctypes import wintypes
-
-    class Entry(ctypes.Structure):
-        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
-                    ("th32DefaultHeapID", ctypes.c_void_p), ("th32ModuleID", wintypes.DWORD),
-                    ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
-                    ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
-                    ("szExeFile", ctypes.c_wchar * 260)]
-
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    snapshot = kernel.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
-    if snapshot in (None, wintypes.HANDLE(-1).value):
-        raise OSError("no process snapshot")
-    entries = {}
-    try:
-        entry = Entry()
-        entry.dwSize = ctypes.sizeof(Entry)
-        ok = kernel.Process32FirstW(snapshot, ctypes.byref(entry))
-        while ok:
-            entries[entry.th32ProcessID] = (entry.th32ParentProcessID, entry.szExeFile)
-            ok = kernel.Process32NextW(snapshot, ctypes.byref(entry))
-    finally:
-        kernel.CloseHandle(snapshot)
-    return entries
-
-
-def process_start(pid):
-    """A process's creation time (Windows FILETIME), or 0: with the pid it names one process run."""
-    import ctypes
-    from ctypes import wintypes
-
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel.OpenProcess.restype = wintypes.HANDLE
-    handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-    if not handle:
-        return 0
-    try:
-        times = [wintypes.FILETIME() for _ in range(4)]
-        if not kernel.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
-            return 0
-        return (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
-    finally:
-        kernel.CloseHandle(handle)
 
 
 def main():

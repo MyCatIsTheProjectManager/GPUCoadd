@@ -15,6 +15,7 @@ BRIDGE = PROJECT_DIR / "worker" / "bridge.py"
 HARDWARE_CHECK = PROJECT_DIR / "worker" / "hardware_check.py"
 DEFAULT_PYTHON = PROJECT_DIR / ".venv" / "Scripts" / "python.exe"
 IDLE_RELEASE_S = 270  # a kept worker idle longer than this is restarted before the next job (it stops at 300)
+FORCE_STOP_AFTER_S = 20  # Cancel unanswered this long: Force Stop is offered (a failed star match takes ~3 s)
 
 
 def work_dir():
@@ -961,3 +962,177 @@ def worker_environment(environ=None, host_variables=()):
                 p for p in env[key].split(os.pathsep) if p and os.path.normcase(os.path.normpath(p)) not in drop
             )
     return env
+
+
+# ---- ending a stuck worker (Windows) -------------------------------------------------------------
+FORCE_STOP_OFFER = ("The worker has not answered the cancel request. Force Stop ends it and every process it "
+                    "started; unfinished files of this job are then removed.")
+
+
+def process_parents():
+    """{pid: (parent pid, exe name)} of all processes (Windows)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Entry(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_void_p), ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", ctypes.c_wchar * 260)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snapshot = kernel.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if snapshot in (None, wintypes.HANDLE(-1).value):
+        raise OSError("no process snapshot")
+    entries = {}
+    try:
+        entry = Entry()
+        entry.dwSize = ctypes.sizeof(Entry)
+        ok = kernel.Process32FirstW(snapshot, ctypes.byref(entry))
+        while ok:
+            entries[entry.th32ProcessID] = (entry.th32ParentProcessID, entry.szExeFile)
+            ok = kernel.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel.CloseHandle(snapshot)
+    return entries
+
+
+def _open_process(pid, access):
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    return kernel, kernel.OpenProcess(access, False, pid)
+
+
+def process_start(pid):
+    """A process's creation time (Windows FILETIME), or 0: with the pid it names one process run."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel, handle = _open_process(pid, 0x1000)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return 0
+    try:
+        times = [wintypes.FILETIME() for _ in range(4)]
+        if not kernel.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+            return 0
+        return (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def process_running(proc):
+    """Whether (pid, start) still runs: the same start time (a reused pid is another process) and
+    no exit code yet (an exited process is still found while a handle to it is open, e.g. Qt's)."""
+    import ctypes
+    from ctypes import wintypes
+
+    pid, start = proc
+    if not start or process_start(pid) != start:
+        return False
+    kernel, handle = _open_process(pid, 0x1000)
+    if not handle:
+        return False
+    try:
+        code = wintypes.DWORD()
+        return bool(kernel.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259  # STILL_ACTIVE
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def process_tree(pid):
+    """The process and every process it started, directly or not, as (pid, start) pairs from one
+    snapshot. A child must have started after its parent, so a reused pid is not taken for one."""
+    root = (pid, process_start(pid))
+    if not root[1]:
+        return []
+    children = {}
+    for child, (parent, _) in process_parents().items():
+        if child != parent:
+            children.setdefault(parent, []).append(child)
+    tree, queue = [root], [root]
+    while queue:
+        parent, started = queue.pop()
+        for child in children.get(parent, []):
+            proc = (child, process_start(child))
+            if proc[1] >= started and proc not in tree:
+                tree.append(proc)
+                queue.append(proc)
+    return tree
+
+
+def end_processes(procs, root=None, timeout=10.0):
+    """End `procs` ((pid, start) pairs): the root's whole tree with taskkill /T /F first, then any
+    survivor on its own, each checked by pid and start time, until none runs or `timeout` passes.
+    Returns those still running."""
+    import subprocess
+    import time
+
+    if root is not None:
+        subprocess.run(["taskkill", "/PID", str(root), "/T", "/F"], capture_output=True,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    deadline = time.monotonic() + timeout
+    while True:
+        left = [proc for proc in procs if process_running(proc)]
+        if not left or time.monotonic() > deadline:
+            return left
+        for pid, start in left:
+            kernel, handle = _open_process(pid, 0x1001)  # PROCESS_TERMINATE | QUERY_LIMITED_INFORMATION
+            if handle:
+                try:
+                    if process_start(pid) == start:
+                        kernel.TerminateProcess(handle, 1)
+                finally:
+                    kernel.CloseHandle(handle)
+        time.sleep(0.1)
+
+
+def job_leftovers(folders, tag):
+    """Unfinished files of the job tagged `tag` (the worker's temporary output files, named
+    .<file>.<tag>.<...>.partial) in `folders` and their direct subfolders (aligned-light copies).
+    Files of other jobs, which another window may be writing, and the user's own never match."""
+    if not tag:
+        return []
+    marker, found = f".{tag}.", []
+    for folder in dict.fromkeys(norm_path(f) for f in folders if f):
+        for place in [folder] + child_folders(folder):
+            try:
+                with os.scandir(place) as entries:
+                    found += [place + "/" + e.name for e in entries
+                              if e.is_file() and e.name.startswith(".") and marker in e.name
+                              and e.name.endswith(".partial")]
+            except OSError:
+                continue
+    return sorted(set(found))
+
+
+def remove_files(paths):
+    """Delete these files; returns those that are still there."""
+    for path in paths:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            pass
+    return [p for p in paths if Path(p).exists()]
+
+
+def stop_message(published, unremoved, survivors=()):
+    """What a forced stop left, saying only what was checked. A publication event confirms a saved
+    file, but its absence proves nothing: the worker can be ended after a file is in place and
+    before it says so."""
+    if survivors:
+        return ("These worker processes did not end: " + ", ".join(str(pid) for pid, _ in survivors)
+                + ". New jobs stay disabled; click Force Stop again, or end them in Task Manager.")
+    if unremoved:
+        return ("Stopped. These unfinished files could not be removed: " + ", ".join(unremoved)
+                + ". Other files may have been saved before the stop.")
+    if published:
+        return ("Stopped. No unfinished file of this job is left. Confirmed saved by this job: "
+                + ", ".join(base_name(norm_path(p)) for p in published)
+                + ". Other files may have been saved before the stop.")
+    return ("Stopped. No unfinished file of this job is left. No saved outputs were confirmed; "
+            "files may have been saved before the stop.")

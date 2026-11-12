@@ -136,6 +136,34 @@ class FolderDiscovery(unittest.TestCase):
                 f"No FITS lights (.fit, .fits, .fts) in {root}/A/jpg/lights.",
             )
 
+    def test_leftovers_of_one_job_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = logic.norm_path(d)
+            Path(out, "s_aligned").mkdir()
+            Path(out, "s_aligned", "deeper").mkdir()
+            tag = "20261112_101500_000001_stack"
+            mine = [f"{out}/.s.fits.{tag}.ab12.partial", f"{out}/s_aligned/.L_aligned.fits.{tag}.c3.partial",
+                    f"{out}/.f.csv.{tag}.partial"]
+            others = [f"{out}/.s.fits.20261112_101500_000002_stack.ab12.partial", f"{out}/notes.partial.txt",
+                      f"{out}/s.fits", f"{out}/s_aligned/deeper/.x.fits.{tag}.d.partial", f"{out}/{tag}.partial"]
+            for path in mine + others:
+                Path(path).write_bytes(b"x")
+            self.assertEqual(logic.job_leftovers([out, out + "/"], tag), sorted(mine))
+            self.assertEqual(logic.job_leftovers([out], ""), [])
+            self.assertEqual(logic.remove_files(logic.job_leftovers([out], tag)), [])
+            self.assertTrue(all(Path(p).exists() for p in others))
+
+    def test_stop_messages_say_only_what_was_checked(self):
+        self.assertEqual(logic.stop_message([], []), "Stopped. No unfinished file of this job is left. No saved "
+                         "outputs were confirmed; files may have been saved before the stop.")
+        self.assertEqual(logic.stop_message(["C:\r\s.fits", "C:/r/s_coverage.fits"], []),
+                         "Stopped. No unfinished file of this job is left. Confirmed saved by this job: s.fits, "
+                         "s_coverage.fits. Other files may have been saved before the stop.")
+        self.assertEqual(logic.stop_message(["C:/r/s.fits"], ["C:/r/.s.fits.t.partial"]),
+                         "Stopped. These unfinished files could not be removed: C:/r/.s.fits.t.partial. Other files "
+                         "may have been saved before the stop.")
+        self.assertIn("did not end: 12, 34", logic.stop_message([], [], [(12, 1), (34, 2)]))
+
     def test_light_suffixes_match_the_engine(self):
         sys.path.insert(0, str(ROOT))
         import lightgroups

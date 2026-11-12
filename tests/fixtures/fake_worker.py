@@ -25,13 +25,37 @@ def emit(kind, **fields):
     print(json.dumps({"type": kind, "time": "", "elapsed_s": 0, **fields}), flush=True)
 
 
+def hang(out, tag, run_folder):
+    """A worker that stops answering: unfinished files of this job (tagged, as the real writers
+    name them), optionally a saved stack it announced, a child process that started a grandchild
+    (then writes tree_ready in the run folder), and no reaction to the cancel file."""
+    import subprocess
+
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "fake_aligned").mkdir(exist_ok=True)
+    (out / f".fake_stack.fits.{tag}.k3j9.partial").write_bytes(b"unfinished")
+    (out / "fake_aligned" / f".Light_0_aligned.fits.{tag}.q81z.partial").write_bytes(b"unfinished")
+    if "published" in out.name:
+        (out / "fake_stack.fits").write_bytes(b"complete")
+        emit("published", path=str(out / "fake_stack.fits"))
+    grandchild = "import time; time.sleep(600)"
+    ready = str(run_folder / "tree_ready")
+    child = (f"import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', {grandchild!r}]); "
+             f"time.sleep(0.5); open({ready!r}, 'w').close(); time.sleep(600)")
+    subprocess.Popen([sys.executable, "-c", child])
+    emit("stage_started", stage="stacking", message="Started stacking")
+    time.sleep(600)
+
+
 def run(request_path, session):
     request_path = Path(request_path)
     request = json.loads(request_path.read_text(encoding="utf-8"))
     op = request["operation"]
     folder = Path(request["work_dir"]) / "runs" / f"fake_{op}_{time.time_ns()}"
     folder.mkdir(parents=True)
-    emit("started", folder=str(folder), message="Operation started")
+    emit("started", folder=str(folder), tag=folder.name, message="Operation started")
+    if "hang" in request["output_dir"]:
+        hang(Path(request["output_dir"]), folder.name, folder)
     groups = [{"key": request["lights_dirs"][0] + "|S50|IRCUT|10", "label": "S50, IRCUT, 3 x 10 s", "lights": 3,
                "total_exposure_s": 30, "used": True, "main": True, "reason": None}]
     result = {"status": "complete", "operation": op, "folder": str(folder), "groups": groups,

@@ -136,6 +136,43 @@ class SafeOutputTests(unittest.TestCase):
                 self.assertEqual(published, [1], "the file is published once")
                 self.assertEqual([p.name for p in out.iterdir()], ["s.fits"], "no unfinished file is left")
 
+    def test_temporary_files_carry_the_job_tag_and_saved_files_are_reported(self):
+        import tempfile as tf
+        import output_store
+        from gpucoadd import write_png
+        from worker.bridge import cancel_message, write_optional
+
+        made, published = [], []
+        real = tf.mkstemp
+
+        def mkstemp(*a, **k):
+            fd, name = real(*a, **k)
+            made.append(Path(name).name)
+            return fd, name
+
+        output_store.set_job("20261112_101500_000001_stack", published.append)
+        try:
+            with tempfile.TemporaryDirectory() as folder, patch("tempfile.mkstemp", mkstemp):
+                img = np.full((20, 30, 3), 2000, np.float32)
+                files = save_image_outputs(Path(folder), img, np.ones((20, 30), np.uint32), fits.Header(), "s", 1,
+                                           output_settings({"coverage_fits": True}))
+                write_png(Path(folder) / "p.png", np.zeros((4, 4, 3), np.uint8))
+                seen = []
+                write_optional(Path(folder) / "f.csv", lambda temp: (seen.append(temp.name), temp.write_text("x")))
+                self.assertEqual(sorted(p.name for p in Path(folder).iterdir()),
+                                 ["f.csv", "p.png", "s.fits", "s_coverage.fits"])
+        finally:
+            output_store.set_job()
+        for name in made + seen:
+            self.assertTrue(name.startswith(".") and ".20261112_101500_000001_stack." in name and
+                            name.endswith(".partial"), name)
+        self.assertEqual([Path(p).name for p in published], ["s_coverage.fits", "s.fits", "p.png", "f.csv"])
+        self.assertEqual(Path(files["stack_fits"]).name, "s.fits")
+        self.assertEqual(output_store.temp_prefix("a.fits"), ".a.fits.", "no job: the names as before")
+        self.assertEqual(cancel_message([]), "Cancelled. No output file was saved; earlier results are as they were.")
+        self.assertEqual(cancel_message(["C:/r/s.fits"]),
+                         "Cancelled. Saved before the cancel: s.fits. Other earlier results are as they were.")
+
     def test_export_conversion_keeps_original_bits_without_changing_input(self):
         from tools.benchmark_light_export import original_pixels
 

@@ -1839,6 +1839,18 @@ def neighbour_candidates(i, known, tried, gid, sky, finite, depth, limit=2):
 NEIGHBOUR_ROUNDS = 6  # rounds of neighbour alignment; each tries up to two aligned lights per pending light
 
 
+@contextmanager
+def dropping_queued_on_error(ex):
+    """When the block fails (a cancel, most often), drop the pool's queued tasks: its shutdown then
+    waits only for those already running, not every star match still queued. A cancel 2 s into
+    M 86's registration (1,293 lights) took 15.7 s to end the worker before."""
+    try:
+        yield ex
+    except BaseException:
+        ex.shutdown(wait=False, cancel_futures=True)
+        raise
+
+
 def register(
     stars,
     ref_idx,
@@ -1882,9 +1894,12 @@ def register(
         sky = np.c_[np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)]
     group_of = gid.tolist()
     finite = None if sky is None else np.isfinite(sky).all(axis=1).tolist()
-    with pool if pool is not None else ProcessPoolExecutor(workers) as ex:
+    with pool if pool is not None else ProcessPoolExecutor(workers) as ex, dropping_queued_on_error(ex):
         results = []
-        for j, result in enumerate(ex.map(match_to_ref, jobs, chunksize=max(1, len(jobs) // (workers * 4))), 1):
+        # at most 4 lights per task: a cancel waits for the tasks already running (40-light tasks on
+        # M 86 kept a cancelled worker running 15 s); the results and their order are the same
+        chunk = max(1, min(4, len(jobs) // (workers * 4)))
+        for j, result in enumerate(ex.map(match_to_ref, jobs, chunksize=chunk), 1):
             results.append(result)
             if progress:
                 progress("registration", j, len(jobs))
@@ -3343,12 +3358,15 @@ def write_png(path, image):
     if not done:
         raise OSError(f"Could not encode PNG: {path}")
     path = Path(path)
-    fd, name = tempfile.mkstemp(prefix=path.name + ".", suffix=".partial", dir=path.parent)
+    from output_store import published, temp_prefix
+
+    fd, name = tempfile.mkstemp(prefix=temp_prefix(path), suffix=".partial", dir=path.parent)
     temp = Path(name)
     try:
         with os.fdopen(fd, "wb") as stream:
             stream.write(encoded.tobytes())
         os.replace(temp, path)
+        published(path)
     finally:
         temp.unlink(missing_ok=True)
 

@@ -8,7 +8,7 @@ import tempfile
 
 import numpy as np
 from astropy.io import fits
-from output_store import BLOCK_BYTES, check_space, row_blocks
+from output_store import BLOCK_BYTES, check_space, published, row_blocks, temp_prefix
 
 # Optional native comparison; NumPy remains the portable fallback. Both compare
 # every byte. Argument types prevent pointer truncation on 64-bit platforms.
@@ -45,7 +45,7 @@ def write_encoded(path, header, shape, body, check_cancel=None):
     check_space([(path.parent, size + 65536)])
     path.parent.mkdir(parents=True, exist_ok=True)
     header_bytes = image_header(header, shape, np.float32).tostring().encode("ascii")
-    fd, name = tempfile.mkstemp(prefix="." + path.name + ".", suffix=".partial", dir=path.parent)
+    fd, name = tempfile.mkstemp(prefix=temp_prefix(path), suffix=".partial", dir=path.parent)
     temp = Path(name)
     try:
         with os.fdopen(fd, "wb") as stream:
@@ -59,6 +59,7 @@ def write_encoded(path, header, shape, body, check_cancel=None):
         verify_fits(temp, shape, size, None, check, header_bytes, body)
         check()
         os.replace(temp, path)
+        published(path)
     finally:
         temp.unlink(missing_ok=True)
     return str(path)
@@ -83,7 +84,7 @@ def write_fits(path, header, shape, dtype, chunks, check_cancel=None, before_pub
     check_space([(path.parent, size + 65536)])
     path.parent.mkdir(parents=True, exist_ok=True)
     h = image_header(header, shape, dtype)
-    fd, name = tempfile.mkstemp(prefix="." + path.name + ".", suffix=".partial", dir=path.parent)
+    fd, name = tempfile.mkstemp(prefix=temp_prefix(path), suffix=".partial", dir=path.parent)
     os.close(fd)
     temp = Path(name)
     stream = None
@@ -128,6 +129,7 @@ def write_fits(path, header, shape, dtype, chunks, check_cancel=None, before_pub
         if before_publish is not None:
             before_publish()
         os.replace(temp, path)  # old output survives until the new file is complete and verified
+        published(path)
     finally:
         try:
             if stream is not None:
