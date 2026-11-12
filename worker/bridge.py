@@ -148,6 +148,40 @@ def fingerprint(paths, settings, reference, source_guard=None):
     }
 
 
+def alignment_part(signature):
+    """What star detection and registration depend on: the signature without the sharpness limit,
+    which only chooses among aligned lights. With GPUCOADD_REFERENCE=session and no chosen
+    reference the limit also picks the reference, so it stays in."""
+    part = dict(signature)
+    if os.environ.get("GPUCOADD_REFERENCE", "measured") != "session" or signature.get("reference"):
+        part.pop("selection", None)
+    return part
+
+
+def reusable_analysis(path, signature, select, reporter):
+    """The analysis of a heat map outdated only by the sharpness limit (request previous_analysis),
+    or None when it cannot be reused. Its Overlap matching solution is kept only when it was solved
+    for exactly the lights this limit retains: the solve is a network over those lights, so another
+    set changes the coefficients of the lights that remain."""
+    from gpucoadd import retained_lights
+
+    try:
+        previous = json.loads(Path(path).read_text(encoding="utf-8"))
+        same = alignment_part(previous["signature"]) == alignment_part(signature)
+        analysis = dict(previous["analysis"])
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        reporter.message("The previous heat map could not be read; star detection and registration run again.")
+        return None
+    if not same:
+        reporter.message("Lights, reference, transform or engine changed; star detection and registration run again.")
+        return None
+    norm = analysis.get("normalization")
+    if norm is not None and sorted(norm.get("frames", [])) != retained_lights(analysis, select):
+        del analysis["normalization"]
+    reporter.message("Reusing star detection and alignment; only the sharpness limit changed.")
+    return analysis
+
+
 def quality_settings(settings):
     choices = {
         "debayer": ("rcd", "bilinear"),
@@ -967,7 +1001,7 @@ def shared_sky_cached(analysis, select):
         norm is not None
         and norm.get("version") == overlap.VERSION
         and norm.get("reference") == analysis.get("ref_idx")
-        and set(map(str, retained_lights(analysis, select))) <= set(norm.get("a", {}))
+        and sorted(norm.get("frames", [])) == retained_lights(analysis, select)
     )
 
 
@@ -1271,7 +1305,11 @@ def _execute(request, reporter, folder, session, workspace):
                         )
             raise ValueError("Lights, reference, selection, or engine changed. Build the heat map again.")
         reporter.message("Validated cached alignment; star detection and registration will be reused.")
-    else:  # registration will run: its workers import the engine while the lights load
+    elif isinstance(request.get("previous_analysis"), str) and request["previous_analysis"]:
+        reused = reusable_analysis(request["previous_analysis"], signature, selection, reporter)
+        if reused is not None:
+            cached = {"signature": signature, "analysis": reused}
+    if cached is None:  # registration will run: its workers import the engine while the lights load
         from gpucoadd import start_registration_pool
 
         reporter.registration_pool = start_registration_pool(threads)
@@ -1282,7 +1320,7 @@ def _execute(request, reporter, folder, session, workspace):
     first = lights[grouping["used"][0]]
     load = list(range(len(paths)))
     prepare_sky = False
-    if cached is not None:
+    if cached is not None and operation == "stack":
         if quality["norm"] == "overlap" and not shared_sky_cached(cached["analysis"], selection):
             # First Overlap matching stack from a heat map built without it: the solve needs every
             # retained light (the same lights and reference as at heat-map time); the lights that
@@ -1337,7 +1375,7 @@ def _execute(request, reporter, folder, session, workspace):
     # mask still reloads to match a fresh worker's memory budget.
     shapes = [(lights[grouping["used"][k]]["height"], lights[grouping["used"][k]]["width"]) for k in load]
     reuse_key = {
-        "signature": signature,
+        "signature": alignment_part(signature),  # kept lights serve a heat map at another limit
         "pedestals": pedestals,
         "interp": quality["interp"],
         "debayer": quality["debayer"],
@@ -1398,7 +1436,9 @@ def _execute(request, reporter, folder, session, workspace):
     reporter.message(
         f"{'Reused prepared lights' if reused else 'Prepared lights'} in {load_s:.1f}s; raw storage: {be.storage_mode}; GPU: {be.torch.cuda.get_device_name(0)}; RCD: {be.rcd_kind}; rejection: {be.clip_kind}; sort: {be.sort_kind}; warp: {be.warp_kind}; calibration: {be.calibration_kind}"
     )
-    captured = {}
+    # a heat map reusing an earlier analysis keeps what stack() does not measure again (statistics,
+    # an Overlap matching solution that still fits); stack() reports the rest
+    captured = dict(cached["analysis"]) if cached is not None and operation == "analyze" else {}
 
     def capture(analysis):
         captured.update(analysis)
@@ -1694,7 +1734,7 @@ def _run_request(request_path, session=None):
     # This run's own files (heat map, report, live activity log) go to GPUCoadd's work area, not
     # the output folder, which receives only the stack and the extras the user chose.
     root = work_root(request)
-    prune_work(root, keep=[request.get("analysis_file")])
+    prune_work(root, keep=[request.get("analysis_file"), request.get("previous_analysis")])
     name = datetime.now().strftime("%Y%m%d_%H%M%S_%f") + "_" + request["operation"]
     folder, k = root / "runs" / name, 1
     while True:  # unique even for runs started within the same microsecond

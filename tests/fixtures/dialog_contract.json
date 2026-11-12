@@ -29,6 +29,35 @@
       }
     },
     {
+      "name": "heat map after a sharpness change, reusing the previous one's alignment",
+      "inputs": {
+        "operation": "analyze",
+        "target": "E:/Seestar S50/IC 63",
+        "folders": ["E:/Seestar S50/IC 63/lights"],
+        "excluded": [],
+        "custom_output": false,
+        "output_dir": "E:/Seestar S50/IC 63",
+        "reference": "",
+        "settings": {"select": 1.5},
+        "outputs": {"stack_preview": false, "coverage_png": false, "coverage_fits": false, "frames_csv": false, "aligned_lights": false, "activity_log": false},
+        "threads": 8,
+        "auto_tile": true,
+        "tile": 512,
+        "previous_analysis": "C:/work/runs/20261029_101500_000000_analyze/analysis.json"
+      },
+      "request": {
+        "operation": "analyze",
+        "lights_dirs": ["E:/Seestar S50/IC 63/lights"],
+        "exclude_groups": [],
+        "output_dir": "E:/Seestar S50/IC 63",
+        "work_dir": "<WORK_DIR>",
+        "reference": "",
+        "settings": {"debayer": "rcd", "interp": "bicubic", "norm": "spread", "weight": "none", "transform": "similarity", "rejection": "sigma", "select": 1.5, "feather": 0, "rgb_equal": true, "match_gradients": false, "threads": 8, "tile": 0},
+        "outputs": {"stack_preview": false, "coverage_png": false, "coverage_fits": false, "frames_csv": false, "aligned_lights": false, "activity_log": false},
+        "previous_analysis": "C:/work/runs/20261029_101500_000000_analyze/analysis.json"
+      }
+    },
+    {
       "name": "stack of a crop with every option changed",
       "inputs": {
         "operation": "stack",

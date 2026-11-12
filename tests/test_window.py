@@ -172,9 +172,16 @@ class Window(unittest.TestCase):
         d.build.click()
         self.wait(lambda: not d.busy)
         self.assertIsNotNone(d.analysis)
-        d.frame_selection.setChecked(True)  # changes the alignment inputs
-        self.assertIsNone(d.analysis, "a setting that changes alignment marks the heat map out of date")
+        previous = d.analysis["analysis_file"]
+        d.frame_selection.setChecked(True)  # the sharpness limit: out of date, its alignment reusable
+        self.assertIsNone(d.analysis, "a new sharpness limit marks the heat map out of date")
         self.assertFalse(d.stack_button.isEnabled())
+        self.assertEqual(d.build_request("analyze")["previous_analysis"], previous)
+        d.sharpness.setValue(d.sharpness.value() + 0.5)  # still the same heat map to reuse
+        self.assertEqual(d.build_request("analyze")["previous_analysis"], previous)
+        d.choices["transform"].setCurrentIndex(1)  # changes the alignment inputs: nothing to reuse
+        self.assertNotIn("previous_analysis", d.build_request("analyze"))
+        d.choices["transform"].setCurrentIndex(0)
         d.choices["norm"].setCurrentIndex(2)
         self.assertFalse(d.rgb_equal.isChecked())
         self.assertFalse(d.rgb_equal.isEnabled())

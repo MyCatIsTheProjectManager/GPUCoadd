@@ -141,7 +141,9 @@ Stacks with both telescopes switch to Overlap matching and noise weights automat
 noise-aware rejection becomes sigma clipping. The log lists the changes.
 
 Changing the alignment, the blurry-light filter, the folders or the group ticks makes the heat map
-out of date; other settings don't. Every run saves its settings in its `report.json`.
+out of date; other settings don't. After a change to the blurry-light filter alone, the next heat
+map reuses the star detection and alignment of the previous one, so it takes seconds instead of a
+full analysis. Every run saves its settings in its `report.json`.
 
 ## Engine settings
 

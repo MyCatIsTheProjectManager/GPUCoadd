@@ -72,8 +72,9 @@ def pairwise(options):
     return rows
 
 
-def write_scene(folder, kind, seed=5):
-    """GRBG lights with stars, a faint nebula, sky gradients and noise, as Seestar FITS files."""
+def write_scene(folder, kind, seed=5, sigmas=None):
+    """GRBG lights with stars, a faint nebula, sky gradients and noise, as Seestar FITS files.
+    sigmas: each light's star width (Gaussian sigma, px); 2.6 for every light by default."""
     rng = np.random.default_rng(seed)
     width = W + (2 * PANEL if kind == "mosaic" else 0) + 40
     stars = []
@@ -94,7 +95,8 @@ def write_scene(folder, kind, seed=5):
         sky = 30 * np.exp(-((x - width / 2) ** 2 / (2 * 200**2) + (y - H / 2) ** 2 / (2 * 120**2)))
         for (sx, sy), peak in zip(stars, peaks):
             near = (np.abs(x - sx) < 15) & (np.abs(y - sy) < 15)
-            sky[near] += peak * np.exp(-((x[near] - sx) ** 2 + (y[near] - sy) ** 2) / (2 * 2.6**2))
+            sigma = 2.6 if sigmas is None else sigmas[i]
+            sky[near] += peak * np.exp(-((x[near] - sx) ** 2 + (y[near] - sy) ** 2) / (2 * sigma**2))
         rgb = rng.uniform(0.7, 1.0) * np.array([1.0, 0.6, 0.45])[:, None, None] * sky
         rgb += rng.uniform(600, 900, 3)[:, None, None] + 0.05 * (xx - W / 2)[None]
         cfa = np.empty((H, W))

@@ -338,9 +338,23 @@ def output_plan_text(options):
     )
 
 
+# (status line, log line) when the heat map goes out of date
+HEAT_MAP_OUTDATED = (
+    "Inputs changed: click Build Heat Map again before stacking.",
+    "Heat map marked out of date. No analysis started automatically.",
+)
+HEAT_MAP_LIMIT_CHANGED = (
+    "Sharpness limit changed: click Build Heat Map again before stacking (alignment is reused).",
+    "Heat map marked out of date by the sharpness limit; the next heat map reuses its star detection and "
+    "alignment. No analysis started automatically.",
+)
+
+
 def build_request(operation, folders, excluded, output_dir, work, reference, settings, outputs, threads, tile,
-                  analysis_file=None, region=None):
-    """The request file's content, field for field in the order of tests/fixtures/dialog_contract.json."""
+                  analysis_file=None, region=None, previous_analysis=None):
+    """The request file's content, field for field in the order of tests/fixtures/dialog_contract.json.
+    previous_analysis: a heat map's analysis.json outdated only by the sharpness limit; the worker
+    reuses its star detection and alignment when the lights, reference and transform still match."""
     request = {
         "operation": operation,
         "lights_dirs": list(folders),
@@ -356,6 +370,8 @@ def build_request(operation, folders, excluded, output_dir, work, reference, set
     if operation == "stack":
         request["analysis_file"] = analysis_file
         request["region"] = list(region)
+    elif operation == "analyze" and previous_analysis:
+        request["previous_analysis"] = previous_analysis
     return request
 
 

@@ -232,7 +232,7 @@ class Contract(unittest.TestCase):
                 request = logic.build_request(
                     i["operation"], i["folders"], i["excluded"], i["output_dir"], "<WORK_DIR>", i["reference"],
                     settings, i["outputs"], i["threads"], 0 if i["auto_tile"] else i["tile"],
-                    i.get("analysis_file"), i.get("region"),
+                    i.get("analysis_file"), i.get("region"), i.get("previous_analysis"),
                 )
                 self.assertEqual(request, case["request"])
                 self.assertEqual(list(request), list(case["request"]), "same field order as the contract")

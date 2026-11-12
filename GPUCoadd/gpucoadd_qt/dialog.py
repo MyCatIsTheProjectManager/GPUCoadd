@@ -285,6 +285,7 @@ class GPUCoaddDialog(QDialog):
         self.session_id = (getattr(host, "session", "") if session is None else session) or ""
         self.setWindowTitle("GPUCoadd: Preview, Frame, Stack")
         self.analysis = None
+        self.stale_analysis = None  # analysis.json of a heat map outdated only by the sharpness limit
         self.pixmap = None
         self.region = None
         self.busy = False
@@ -641,7 +642,7 @@ class GPUCoaddDialog(QDialog):
         self.sharpness.setEnabled(False)
         self.sharpness.setToolTip(sharpness_tip)
         self.sharpness.valueChanged.connect(
-            lambda _: self.invalidate() if self.frame_selection.isChecked() and not self.restoring_settings else None
+            lambda _: self.mark_stale() if self.frame_selection.isChecked() and not self.restoring_settings else None
         )
         sharpness_label = QLabel("Sharpness limit")
         sharpness_label.setToolTip(sharpness_tip)
@@ -1081,13 +1082,15 @@ class GPUCoaddDialog(QDialog):
     def frame_selection_toggled(self, checked):
         self.sharpness.setEnabled(checked and not self.busy)
         if not self.restoring_settings:
-            self.invalidate()
+            self.mark_stale()
 
     def restore_defaults(self):
         previous = self.quality_settings()
         self.apply_quality({})
-        if previous["select"] != 0 or previous["transform"] != "similarity":
+        if previous["transform"] != "similarity":
             self.invalidate()
+        elif previous["select"] != 0:
+            self.mark_stale()
         self.append("Recommended image-quality defaults restored. No operation started.")
 
     def output_settings(self):
@@ -1102,15 +1105,28 @@ class GPUCoaddDialog(QDialog):
 
     # ---- heat map and framing ------------------------------------------------------------------
     def invalidate(self):
+        self.stale_analysis = None
         self.release_gpu()
+        self.clear_heat_map(logic.HEAT_MAP_OUTDATED)
+
+    def mark_stale(self):
+        """Only the sharpness limit changed: the heat map is out of date as with invalidate(), but
+        its star detection and alignment still hold. The next Build Heat Map sends it as
+        previous_analysis, and the worker keeps its loaded lights for that."""
+        if self.analysis:
+            self.stale_analysis = self.analysis.get("analysis_file")
+        self.clear_heat_map(logic.HEAT_MAP_LIMIT_CHANGED)
+
+    def clear_heat_map(self, texts):
         if not self.analysis:
             return
         self.analysis = self.pixmap = self.region = None
         self.full_frame.setChecked(True)
         self.map.mouseReleaseEvent()
         self.update_stack_caption()
-        self.status.setText("Inputs changed: click Build Heat Map again before stacking.")
-        self.append("Heat map marked out of date. No analysis started automatically.")
+        status, log = texts
+        self.status.setText(status)
+        self.append(log)
         self.set_busy(False)
         self.map.update()
 
@@ -1154,6 +1170,7 @@ class GPUCoaddDialog(QDialog):
     def show_analysis(self, result, pixmap=None):
         pixmap = pixmap or self.prepare_analysis(result)
         self.analysis, self.pixmap, self.paint_error = result, pixmap, False
+        self.stale_analysis = None
         self.set_region(logic.full_frame(result["canvas"]))
         self.map_info.setText(logic.map_info(result))
         self.map.update()
@@ -1320,6 +1337,7 @@ class GPUCoaddDialog(QDialog):
             0 if self.auto_tile.isChecked() else self.tile_size.value(),
             self.analysis.get("analysis_file") if operation == "stack" and self.analysis else None,
             self.region if operation == "stack" else None,
+            self.stale_analysis if operation == "analyze" else None,
         )
 
     def worker_running(self):

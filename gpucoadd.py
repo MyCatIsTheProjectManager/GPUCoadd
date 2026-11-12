@@ -2696,11 +2696,13 @@ def stack(
         import overlap
 
         cached = (analysis_cache or {}).get("normalization")
+        # reused only when solved for exactly these lights: the solve is a network over them, so
+        # another set (a different sharpness limit) changes the coefficients of those that remain
         if (
             cached is not None
             and cached.get("version") == overlap.VERSION
             and cached.get("reference") == ref_idx
-            and set(map(str, ok)) <= set(cached["a"])
+            and sorted(cached.get("frames", [])) == sorted(set(ok) | {ref_idx})
         ):
             normalization = cached
         elif set(ok) | {ref_idx} <= loaded_set:
