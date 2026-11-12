@@ -228,6 +228,10 @@ def output_settings(settings):
 ADU_SCALE = 2 * 65535.0  # stacked FITS: value = (ADU + offset) / ADU_SCALE, 2x headroom above 16 bits
 
 
+class ClippedStack(Exception):
+    """The stack being written has clipped samples, which its header must name: write it again."""
+
+
 def stack_pixels(img, offset=0.0, *, count_clipping=True):
     """The stack as written to FITS, in 0..1 as image processing programs expect (some otherwise
     rescale each file from its own min..max on opening): (ADU + offset) / ADU_SCALE, with the
@@ -357,7 +361,7 @@ def save_image_outputs(
     the job carries on; without it the failure is raised."""
     import numpy as np
     from gpucoadd import coverage_preview, preview
-    from fits_output import write_fits, coverage_chunks, stack_chunks, clipping_counts
+    from fits_output import write_fits, coverage_chunks, stack_chunks
     from resource_guard import ResourcePressureError, check_ram
 
     check = check_cancel or (lambda: None)
@@ -410,30 +414,55 @@ def save_image_outputs(
         path = folder / (basename + ".fits")
         stack_header = hdr.copy()
         stack_header["PRODTYPE"] = "STACK"
-        low, high = clipping_counts(img, offset, stack_pixels, check)
         stack_header["ADUSCALE"] = (ADU_SCALE, "ADU = value x ADUSCALE - ADUOFFS")
         stack_header["ADUOFFS"] = (float(offset), "camera offset of the reference light, ADU")
         stack_header["HISTORY"] = "Pixels: (ADU + ADUOFFS) / ADUSCALE in 0..1; uncovered pixels are 0"
-        if low or high:
-            stack_header["HISTORY"] = f"Clipped samples: {low} low, {high} high"
-        if clipping is not None:
-            clipping.update(low=low, high=high)
         # The read-back check compares the file with the written bytes kept in RAM when they fit
         # (SH2-142's 235 MB stack: 0.35 s instead of 1.32 s for two SHA-256 passes); otherwise
         # it hashes both, as before. The file is the same either way.
         size = 3 * img.shape[0] * img.shape[1] * 4
         verify = np.empty(size, np.uint8) if check_ram(size, "stack verification") else None
-        write_fits(
-            path,
-            stack_header,
-            (3, *img.shape[:2]),
-            np.float32,
-            stack_chunks(img[::-1], offset, stack_pixels, check),
-            check,
-            before_publish,
-            verify_buffer=verify,
-        )
+        # Clipped samples are counted while the pixels are converted for writing (a separate
+        # counting pass converted the whole stack once more: 2.9 s for a 1.36 GB stack). They are
+        # expected to be 0, which the header assumes; otherwise that file is stopped before it is
+        # published and written again with the counts in its header.
+        counts = [0, 0]
+
+        def convert(block, offset):
+            pixels, low, high = stack_pixels(block, offset)
+            counts[0] += low
+            counts[1] += high
+            return pixels, low, high
+
+        def publish_unclipped():
+            if counts[0] or counts[1]:
+                raise ClippedStack()
+            if before_publish is not None:
+                before_publish()
+
+        def write(header, publish, convert):
+            counts[:] = [0, 0]
+            write_fits(
+                path,
+                header,
+                (3, *img.shape[:2]),
+                np.float32,
+                stack_chunks(img[::-1], offset, convert, check),
+                check,
+                publish,
+                verify_buffer=verify,
+            )
+
+        try:
+            write(stack_header, publish_unclipped, convert)
+        except ClippedStack:
+            low, high = counts
+            stack_header["HISTORY"] = f"Clipped samples: {low} low, {high} high"
+            write(stack_header, before_publish, stack_pixels)
+            counts[:] = [low, high]
         del verify
+        if clipping is not None:
+            clipping.update(low=counts[0], high=counts[1])
         files["stack_fits"] = str(path)
         if options["stack_preview"]:
             save_extra(

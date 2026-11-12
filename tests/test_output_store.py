@@ -73,7 +73,7 @@ class SafeOutputTests(unittest.TestCase):
 
     def test_stack_checked_against_ram_copy_when_it_fits_else_hashed(self):
         img = np.random.default_rng(72).normal(2000, 500, (37, 29, 3)).astype(np.float32)
-        img[0, :2] = [[np.nan, np.inf, 0], [-0.0, 1, 2]]
+        img[0, :2] = np.nan  # uncovered; no clipped sample, so one write
         options = output_settings({})
         saved = {}
         with tempfile.TemporaryDirectory() as folder:
@@ -93,6 +93,48 @@ class SafeOutputTests(unittest.TestCase):
                     self.assertEqual(buffers[0].nbytes, img.nbytes)
                 saved[room] = Path(files["stack_fits"]).read_bytes()
         self.assertEqual(saved[True], saved[False])
+
+    def two_pass_stack(self, path, img, offset):
+        """The stack file as written before clipping was counted in the writing pass."""
+        from fits_output import clipping_counts, stack_chunks
+        from worker.bridge import ADU_SCALE
+
+        low, high = clipping_counts(img, offset, stack_pixels)
+        header = fits.Header()
+        header["ROWORDER"] = ("BOTTOM-UP", "FITS standard: first stored row is the bottom")
+        header["PRODTYPE"] = "STACK"
+        header["ADUSCALE"] = (ADU_SCALE, "ADU = value x ADUSCALE - ADUOFFS")
+        header["ADUOFFS"] = (float(offset), "camera offset of the reference light, ADU")
+        header["HISTORY"] = "Pixels: (ADU + ADUOFFS) / ADUSCALE in 0..1; uncovered pixels are 0"
+        if low or high:
+            header["HISTORY"] = f"Clipped samples: {low} low, {high} high"
+        write_fits(path, header, (3, *img.shape[:2]), np.float32, stack_chunks(img[::-1], offset, stack_pixels))
+        return path.read_bytes(), (low, high)
+
+    def test_stack_converted_once_and_clipping_named_as_before(self):
+        from fits_output import row_blocks
+
+        rng = np.random.default_rng(73)
+        clean = rng.normal(2000, 300, (61, 47, 3)).astype(np.float32)
+        clean[0, :2] = np.nan
+        clipped = clean.copy()
+        clipped[3, 4] = [-5000, 2000, 400000]  # one sample low, one high
+        clipped[9, 9, 1] = 300000
+        options = output_settings({})
+        blocks = 3 * len(list(row_blocks(*clean.shape[:2])))
+        with tempfile.TemporaryDirectory() as folder:
+            for name, img, expect in (("clean", clean, (0, 0)), ("clipped", img := clipped, (1, 2))):
+                expected, counts = self.two_pass_stack(Path(folder) / f"{name}_expected.fits", img, 206.0)
+                self.assertEqual(counts, expect)
+                out, clipping, published = Path(folder) / name, {}, []
+                with patch("worker.bridge.stack_pixels", wraps=stack_pixels) as convert:
+                    files = save_image_outputs(out, img, None, fits.Header(), "s", 1, options, offset=206.0,
+                                               clipping=clipping, before_publish=lambda: published.append(1))
+                self.assertEqual(Path(files["stack_fits"]).read_bytes(), expected, name)
+                self.assertEqual((clipping["low"], clipping["high"]), expect)
+                self.assertEqual(convert.call_count, blocks if name == "clean" else 2 * blocks)
+                self.assertEqual(published, [1], "the file is published once")
+                self.assertEqual([p.name for p in out.iterdir()], ["s.fits"], "no unfinished file is left")
 
     def test_export_conversion_keeps_original_bits_without_changing_input(self):
         from tools.benchmark_light_export import original_pixels
