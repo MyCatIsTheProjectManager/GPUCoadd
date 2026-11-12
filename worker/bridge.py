@@ -1301,7 +1301,7 @@ def _execute(request, reporter, folder, session, workspace):
     import cv2
     import numpy as np
     from astropy.io import fits
-    from gpucoadd import GPUBackend, frames_for_region, load_frames, retained_lights, sensor_edge, stack, write_png
+    from gpucoadd import GPUBackend, frames_for_region, load_lights, retained_lights, sensor_edge, stack, write_png
 
     operation = request["operation"]
     if operation not in ("analyze", "stack", "scan"):
@@ -1454,7 +1454,7 @@ def _execute(request, reporter, folder, session, workspace):
     load_start = time.perf_counter()
 
     def inputs():
-        for i, raw in enumerate(load_frames([str(paths[k]) for k in load], source_guard=reporter.source_guard), 1):
+        for i, raw in enumerate(load_lights([str(paths[k]) for k in load], source_guard=reporter.source_guard), 1):
             reporter.check_cancel()
             yield raw
             if i % 8 == 0 or i == len(load):

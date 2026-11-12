@@ -26,6 +26,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 import time
 from collections import Counter, defaultdict, deque
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
@@ -937,15 +938,24 @@ class GPUBackend:
                     # RAM ran short while loading: this light is read from its file per tile instead
                     self.raw.append(DiskLight(self.paths[len(self.raw)], tuple(r.shape)))
                     self.note_released(1, "while loading", log=False)
+                    if isinstance(r, PinnedLight):
+                        r.release()
                 else:
                     if self.storage_mode == "gpu":
                         check_gpu(
                             self, light_bytes + self.storage_plan["gpu_workspace_reserve_bytes"], "raw-light upload"
                         )
-                    raw = torch.from_numpy(np.ascontiguousarray(r).view(np.int16))
-                    if self.storage_mode == "gpu":
-                        with self.timer("upload"):
-                            raw = raw.to(self.dev)
+                    if isinstance(r, PinnedLight):  # read into pinned memory, converted on the GPU
+                        if self.storage_mode == "gpu":
+                            with self.timer("upload"):
+                                raw = r.cuda(torch, self.dev)
+                        else:
+                            raw = torch.from_numpy(r.host().view(np.int16))
+                    else:
+                        raw = torch.from_numpy(np.ascontiguousarray(r).view(np.int16))
+                        if self.storage_mode == "gpu":
+                            with self.timer("upload"):
+                                raw = raw.to(self.dev)
                     self.raw.append(raw)
             if loading_progress and (len(self.raw) % 32 == 0 or len(self.raw) == len(self.loaded)):
                 loading_progress("loading lights", len(self.raw), len(self.loaded))
@@ -3306,9 +3316,108 @@ def stack(
 def load_frames(paths, workers=4, ahead=8, source_guard=None):
     """Lights in order, read on `workers` threads at most `ahead` lights ahead of the consumer, so
     one that uploads each light as it arrives holds only a few in host memory (Executor.map would
-    queue every file and keep each result until it is consumed: ~5.4 GiB for 351 S50 Pro lights)."""
-    paths = iter(paths)
+    queue every file and keep each result until it is consumed)."""
     read = read_light if source_guard is None else lambda p: source_guard.read(p, read_light)
+    yield from _load_in_order(paths, workers, ahead, read)
+
+
+class PinnedLight:
+    """A plain 16-bit light (BZERO 32768) read straight from its file into a pinned host buffer,
+    still as stored (big-endian). cuda() gives the engine's raw bits on the GPU, converted there;
+    host() gives them as uint16 in RAM. Either one returns the buffer to its pool."""
+
+    def __init__(self, pool, slot, layout, nbytes):
+        self.pool, self.slot, self.layout, self.nbytes = pool, slot, layout, nbytes
+        self.shape = layout.shape
+
+    def cuda(self, torch, dev):
+        """int16 tensor (the uint16 bits) on `dev`; the buffer is reused once the copy is done."""
+        H, W = self.layout.stored_shape
+        stored = self.pool.buffers[self.slot][: self.nbytes].to(dev, non_blocking=True)
+        done = torch.cuda.Event()
+        done.record()
+        self.pool.release(self.slot, done)
+        # big-endian int16 to native byte order, then the sign bit flipped (int16 + 32768)
+        raw = stored.view(-1, 2).flip(1).contiguous().view(torch.int16).view(H, W)
+        raw ^= torch.tensor(-32768, dtype=torch.int16, device=dev)
+        rows, cols = self.layout.window()
+        raw = raw[rows, cols]
+        return (raw.flip(0) if self.layout.bottom_up else raw).contiguous()
+
+    def host(self):
+        H, W = self.layout.stored_shape
+        stored = self.pool.buffers[self.slot][: self.nbytes].numpy().view(">u2").reshape(H, W)
+        rows, cols = self.layout.window()
+        part = stored[rows, cols].astype(np.uint16) ^ np.uint16(0x8000)
+        self.pool.release(self.slot, None)
+        return np.ascontiguousarray(part[::-1] if self.layout.bottom_up else part)
+
+    def release(self):
+        self.pool.release(self.slot, None)
+
+
+class PinnedPool:
+    """Pinned host buffers for PinnedLight; a buffer is refilled only after its copy finished."""
+
+    def __init__(self, torch):
+        self.torch, self.buffers, self.free, self.lock = torch, [], [], threading.Lock()
+
+    def take(self, nbytes):
+        with self.lock:
+            slot, done = self.free.pop() if self.free else (len(self.buffers), None)
+            if slot == len(self.buffers):
+                self.buffers.append(None)
+        if done is not None:
+            done.synchronize()
+        if self.buffers[slot] is None or self.buffers[slot].numel() < nbytes:
+            self.buffers[slot] = self.torch.empty(nbytes, dtype=self.torch.uint8).pin_memory()
+        return slot
+
+    def release(self, slot, done):
+        with self.lock:
+            if all(s != slot for s, _ in self.free):
+                self.free.append((slot, done))
+
+
+def load_lights(paths, workers=4, ahead=8, source_guard=None):
+    """As load_frames, but plain 16-bit lights (BZERO 32768, the Seestar's) come as PinnedLight:
+    read once into pinned memory and converted on the GPU, instead of a byte swap, a sign flip and
+    a pageable upload in host memory. Other lights come as read_light's arrays."""
+    import torch
+    from fits_input import STORED, _direct
+
+    pool = PinnedPool(torch)
+
+    def read(path):
+        direct = _direct(path)
+        if direct is None or not (direct[0].bitpix == 16 and direct[0].bzero == 32768 and direct[0].bscale == 1):
+            return read_light(path)
+        layout, offset = direct
+        H, W = layout.stored_shape
+        nbytes = H * W * np.dtype(STORED[16]).itemsize
+        slot = pool.take(nbytes)
+        view = memoryview(pool.buffers[slot].numpy())[:nbytes]
+        try:
+            with open(path, "rb", buffering=0) as f:
+                f.seek(offset)
+                done = 0
+                while done < nbytes:
+                    got = f.readinto(view[done:])
+                    if not got:
+                        raise ValueError(f"Truncated light: {path}; expected {H * W} pixels")
+                    done += got
+        except BaseException:
+            pool.release(slot, None)
+            raise
+        return PinnedLight(pool, slot, layout, nbytes)
+
+    reader = read if source_guard is None else lambda p: source_guard.read(p, read)
+    yield from _load_in_order(paths, workers, ahead, reader)
+
+
+def _load_in_order(paths, workers, ahead, read):
+    """Results of read(path) in order, on `workers` threads, at most `ahead` ahead of the consumer."""
+    paths = iter(paths)
     with ThreadPoolExecutor(workers) as ex:
         pending = deque(ex.submit(read, p) for p in itertools.islice(paths, ahead))
         while pending:
