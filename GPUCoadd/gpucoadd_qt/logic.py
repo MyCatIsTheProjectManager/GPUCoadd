@@ -65,10 +65,19 @@ def is_sub_copy_folder(path):
     return re.search(r"_sub$", base_name(path), re.IGNORECASE) is not None
 
 
-def has_fit_lights(folder):
+# The engine's lightgroups.LIGHT_SUFFIXES, repeated: this module runs in the host's Python and must
+# not import the engine (lightgroups imports numpy). tests/test_window_logic.py keeps them equal.
+LIGHT_SUFFIXES = (".fit", ".fits", ".fts")
+
+
+def no_lights_message(folder):
+    return f"No FITS lights (.fit, .fits, .fts) in {folder}."
+
+
+def has_lights(folder):
     try:
         with os.scandir(norm_path(folder)) as entries:
-            return any(e.is_file() and e.name.lower().endswith(".fit") for e in entries)
+            return any(e.is_file() and e.name.lower().endswith(LIGHT_SUFFIXES) for e in entries)
     except OSError:
         return False
 
@@ -88,7 +97,7 @@ def child_folders(folder):
 
 def find_light_folders(chosen):
     """The chosen folder as {target, lights, offered} or {error}. A target folder uses its "lights"
-    folder; a picked lights folder (named "lights", or holding .fit lights itself) still works, with
+    folder; a picked lights folder (named "lights", or holding FITS lights itself) still works, with
     its parent as the target. Other "lights" folders one level down (a second telescope, e.g.
     "s50pro/lights") are only offered: the same filter name can hide different filters."""
     chosen = norm_path(chosen)
@@ -100,7 +109,7 @@ def find_light_folders(chosen):
             'Choose the target folder (the one with "lights") instead.'
         }
     if re.fullmatch(r"lights", base_name(chosen), re.IGNORECASE) or (
-        has_fit_lights(chosen) and not is_dir(chosen + "/lights")
+        has_lights(chosen) and not is_dir(chosen + "/lights")
     ):
         target, lights = parent_path(chosen), chosen
     elif is_dir(chosen + "/lights"):
@@ -110,8 +119,8 @@ def find_light_folders(chosen):
             "error": f'No "lights" folder in {chosen}. Choose the target folder that holds your lights folder, '
             "or the lights folder itself."
         }
-    if not has_fit_lights(lights):
-        return {"error": f"No .fit lights in {lights}."}
+    if not has_lights(lights):
+        return {"error": no_lights_message(lights)}
     offered = []
     for child in child_folders(target):
         candidate = child + "/lights"
@@ -119,7 +128,7 @@ def find_light_folders(chosen):
             not is_sub_copy_folder(child)
             and candidate.lower() != lights.lower()
             and is_dir(candidate)
-            and has_fit_lights(candidate)
+            and has_lights(candidate)
         ):
             offered.append(candidate)
     return {"target": target, "lights": lights, "offered": offered}
@@ -197,8 +206,8 @@ def add_folder_problem(folder):
     """Why a folder picked with Add Folder cannot be used, or None."""
     if is_sub_copy_folder(folder):
         return 'Seestar "_sub" folders hold copies of the lights; add a "lights" folder instead.'
-    if not has_fit_lights(folder):
-        return f"No .fit lights in {norm_path(folder)}."
+    if not has_lights(folder):
+        return no_lights_message(norm_path(folder))
     return None
 
 

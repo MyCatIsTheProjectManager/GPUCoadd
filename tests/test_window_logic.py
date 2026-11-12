@@ -107,10 +107,40 @@ class FolderDiscovery(unittest.TestCase):
             self.assertEqual(logic.find_light_folders(t + "/lights")["target"], t)
             self.assertIn("_sub", logic.find_light_folders(t + "/IC 63_sub")["error"])
             self.assertIn('No "lights" folder', logic.find_light_folders(t + "/notes")["error"])
-            self.assertIn("No .fit lights", logic.find_light_folders(t + "/empty")["error"])
+            self.assertEqual(
+                logic.find_light_folders(t + "/empty")["error"],
+                f"No FITS lights (.fit, .fits, .fts) in {t}/empty/lights.",
+            )
             self.assertEqual(logic.find_light_folders("")["error"], "Choose a target folder.")
             self.assertIsNone(logic.add_folder_problem(t + "/lights"))
             self.assertIn("_sub", logic.add_folder_problem(t + "/IC 63_sub"))
+
+    def test_fits_and_fts_lights_as_the_engine_reads_them(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = logic.norm_path(d)
+            for target, name in (("A", "Light_1.fits"), ("B", "LIGHT_1.FTS"), ("C", "Light_1.Fit")):
+                Path(root, target, "lights").mkdir(parents=True)
+                Path(root, target, "lights", name).write_bytes(b"")
+                found = logic.find_light_folders(f"{root}/{target}")
+                self.assertEqual(found.get("lights"), f"{root}/{target}/lights", found)
+                self.assertIsNone(logic.add_folder_problem(f"{root}/{target}/lights"))
+            # a second folder of .fits lights is offered; one with other files only is not
+            Path(root, "A", "s50pro", "lights").mkdir(parents=True)
+            Path(root, "A", "s50pro", "lights", "Light_2.fits").write_bytes(b"")
+            Path(root, "A", "jpg", "lights").mkdir(parents=True)
+            Path(root, "A", "jpg", "lights", "Light_2.jpg").write_bytes(b"")
+            Path(root, "A", "jpg", "lights", "Light_2.fits.txt").write_bytes(b"")
+            self.assertEqual(logic.find_light_folders(f"{root}/A")["offered"], [f"{root}/A/s50pro/lights"])
+            self.assertEqual(
+                logic.add_folder_problem(f"{root}/A/jpg/lights"),
+                f"No FITS lights (.fit, .fits, .fts) in {root}/A/jpg/lights.",
+            )
+
+    def test_light_suffixes_match_the_engine(self):
+        sys.path.insert(0, str(ROOT))
+        import lightgroups
+
+        self.assertEqual(logic.LIGHT_SUFFIXES, lightgroups.LIGHT_SUFFIXES)
 
     def test_folder_state(self):
         f = logic.Folders()

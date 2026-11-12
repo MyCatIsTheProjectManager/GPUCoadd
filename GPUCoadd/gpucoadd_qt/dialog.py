@@ -890,7 +890,7 @@ class GPUCoaddDialog(QDialog):
 
     def choose_file(self, initial, python):
         caption = "Select the CUDA Python environment" if python else "Select an optional alignment reference light"
-        pattern = "Python executable (*.exe)" if python else "FITS light (*.fit)"
+        pattern = "Python executable (*.exe)" if python else "FITS light (*.fit *.fits *.fts)"
         return QFileDialog.getOpenFileName(self, caption, initial or "", pattern)[0] or None
 
     def results_folder(self):
