@@ -129,8 +129,9 @@ RGB backgrounds on, and turns off blurry-light rejection, feathering and gradien
   mosaics taken over several nights.
 - **Leave out blurry lights:** off, so every aligned light is used. When on, lower limits drop more
   lights (focus drift, wind, poor seeing).
-- **Feather edges** blends each light in over this many pixels from its edge, hiding steps between
-  lights. Wider feathering adds noise where few lights overlap.
+- **Feather edges** blends each light in over this many pixels from its edge, softening steps where
+  lights end. It doesn't remove brightness differences between mosaic panels. Wider feathering adds
+  noise where few lights overlap.
 - **Equalize RGB backgrounds** (Background spread with one light group only) matches every channel
   to the reference light's green background. It changes colour balance and is not colour
   calibration. It switches off with other brightness methods or mixed groups and returns when

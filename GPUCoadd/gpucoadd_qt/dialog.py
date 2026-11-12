@@ -62,10 +62,9 @@ CHOICE_TIPS = {
     "interp": "Controls how images are moved into place. Bicubic keeps more detail. Bilinear is faster but can blur "
     "small stars.",
     "norm": "Balances brightness between lights. Background spread is the usual choice. Star brightness matches the "
-    "stars instead. Overlap matching compares lights only where they show the same sky, so nebula is never mistaken "
-    "for background; it handles mosaics and changing haze best in tests, but is still being validated on finished "
-    "stacks. Prepared while building the heat map when chosen beforehand (or for two telescopes); otherwise the first "
-    "stack with it prepares it once from all lights (about 30 s for 350 lights) and saves it to the heat map.",
+    "stars instead. Overlap matching compares lights only where they show the same sky; it gave the most signal on "
+    "mosaics taken over several nights. Prepared while building the heat map when chosen beforehand (or for two "
+    "telescopes); otherwise the first stack with it prepares it once from all lights and saves it to the heat map.",
     "weight": "Equal gives each light the same influence. Noise-based favours quieter red, green and blue measurements "
     "separately. Experimental: compare faint detail before choosing it.",
     "rejection": "How unusual pixels (satellites, planes, hot pixels) are left out of each stacked pixel. Sigma "
@@ -567,8 +566,8 @@ class GPUCoaddDialog(QDialog):
         self.failure_panel.setVisible(False)
         self.storage_panel, self.storage_title, self.storage_message = amber_panel()
         self.storage_panel.setToolTip(
-            "This storage strategy preserves precision, samples and processing settings. Adequate disk space and "
-            "working memory are still required; resource failures are reported separately."
+            "The result is the same as with everything in GPU memory; it only takes longer. Enough free disk space "
+            "and RAM are still needed."
         )
         self.close_button = QPushButton("Close")
         self.close_button.clicked.connect(self.close_clicked)
@@ -608,15 +607,15 @@ class GPUCoaddDialog(QDialog):
         self.match_gradients = QCheckBox("Match gradients (Overlap matching)")
         self.match_gradients.setToolTip(
             "Experimental, off by default. With Overlap matching, adjusts smooth background differences using "
-            "overlapping sky. Noisy or small overlaps can change faint structure: compare with this option off. It "
-            "does not replace calibration flats. Changes stacking only; the heat map stays valid."
+            "overlapping sky. Without flats, the lights' vignetting makes it add a broad dome across a mosaic. Noisy "
+            "or small overlaps can change faint structure: compare with this option off. Changes stacking only; the "
+            "heat map stays valid."
         )
         feather_tip = (
-            "Blends each light in gradually over this many pixels from its edge, so edges that do not quite match "
-            "(vignetting, gradients, mosaic panels) leave no visible step. 0 turns it off. Try 20-50 px for small "
-            "steps; stacks with strong edge differences may need 200 px or more. Use the smallest value that hides the "
-            "steps: lights count less near their edges, so wide feathering adds noise where few lights overlap. "
-            "Stacking only: the heat map stays valid."
+            "Blends each light in gradually over this many pixels from its edge, which softens steps where lights "
+            "end. It does not remove brightness differences between mosaic panels. 0 turns it off. Lights count less "
+            "near their edges, so wide feathering adds noise where few lights overlap: use the smallest value that "
+            "hides the steps. Stacking only: the heat map stays valid."
         )
         self.feather = QSpinBox()
         self.feather.setRange(0, 1000)
@@ -697,7 +696,7 @@ class GPUCoaddDialog(QDialog):
         self.workers.setValue(8)
         self.workers.setToolTip(
             "How many CPU helpers align the lights. More may be faster, but can make the computer less responsive. "
-            "Eight is the current default."
+            "The default is 8."
         )
         self.tile_size = QSpinBox()
         self.tile_size.setRange(64, 1024)
